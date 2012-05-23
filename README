@@ -1,0 +1,41 @@
+proglang-backend
+================
+
+Tools and IR languages for compiling languages.
+
+
+This package is designed to assist in compiling languages to produce
+executable files.  At the moment, it contains one IR language, though
+others are planned.
+
+ * SimpleIR: A simply-typed language with flat scopes, whose
+   instructions correspond to LLVM's.  However, SimpleIR has mutable
+   variables, supports variant types (not implemented), and allows
+   variables of any type (not implemented).  Also, it makes
+   instruction selection decisions based on the types of arguments
+   (not implemented).
+
+   Simple IR also contains rather elaborate information pertaining to
+   garbage collection.
+
+
+ * PolyIR (not implemented): A polymorphically-typed IR language with
+   nested scopes and patterns.
+
+
+Compilation steps are as follows:
+
+ * SimpleIR to LLVM: convert types and generate metadata to capture
+   garbage collection and other information, SSA construction,
+   generate LLVM instructions.
+
+ * PolyIR to SimpleIR (not implemented): monomorphize and boxing to
+   eliminate polymorphic types, scope analysis and static linking.
+
+
+
+*NOTE*: This package in under active design and development.  The
+ SimpleIR language is likely to change and/or expand.  Compilation to
+ LLVM is only partially complete at this point, and some important
+ things are not supported (structures as local variables, variant
+ types at all, etc.)
