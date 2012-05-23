@@ -44,6 +44,24 @@
 --   * Escape analysis to figure out what needs to be alloca'ed
 --   * Storing local variables in alloca'ed slots at all
 --   * Type-driven compilation
+--   * Use unboxed arrays
+--
+-- Notes:
+--   * For aggregates-as-values, insert a value in the value map
+--     during final code generation describing the aggregate, and
+--     mapping its fields to new values.  For phis, treat an
+--     assignment to an aggregate as an assignment to all of its
+--     fields.  Do this field expansion BEFORE creating the phi-sets
+--   * Variants can be treated like any other aggregate.  Anytime we
+--     assign a particular variant to a variant typed value, set all
+--     the fields for the other variants to undef.
+--   * Local variables should probably be annotated with a source.
+--     This would allow static link accessed variables to be bound
+--     properly.
+--   * Functions could take an additional argument list representing
+--     static linking.
+--   * For type-driven compilation, have code gen functions return a
+--     type as well, and make decisions based on that.
 module SimpleIR.LLVMGen(
        toLLVM
        ) where
