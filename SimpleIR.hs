@@ -109,8 +109,10 @@ import Text.Format
 -- | Types.  Types are monomorphic, and correspond roughly with LLVM
 -- types. XXX add a variant type
 data Type =
+  -- | A function type
+    FuncType Type [Type]
   -- | A structure, representing both tuples and records
-    StructType !Bool (Array Fieldname (String, Mutability, Type))
+  | StructType !Bool (Array Fieldname (String, Mutability, Type))
   -- | An array.  Unlike LLVM arrays, these may be variable-sized
   | ArrayType !(Maybe Word) Type
   -- | Pointers, both native and GC
@@ -219,25 +221,26 @@ data Transfer =
   -- return
   | Unreachable
 
--- | Binary operators
+-- | Binary operators.  The Arithmetic operators exist for matched
+-- integer and floating point types.  Subtraction always produces a
+-- signed integer type.
 data Binop =
-    Add | AddNSW | AddNUW | FAdd | Sub | SubNSW | SubNUW | FSub
-  | Mul | MulNSW | MulNUW | FMul | UDiv | SDiv | FDiv
-  | UMod | SMod | FMod | And | Or | Xor | Shl | AShr | LShr 
-  | Eq | Neq | UGe | SGe | ULe | SLe | UGt | SGt | ULt | SLt
+    Add | AddNW | Sub | SubNW | Mul | MulNW | Div | Mod
+  | And | Or | Xor | Shl | Shr | Eq | Neq | Ge | Le | Gt | Lt
   | FOEq | FONeq | FOGt | FOGe | FOLt | FOLe
   | FUEq | FUNeq | FUGt | FUGe | FULt | FULe
 
 -- | Unary operators
-data Unop = Neg | NegNSW | NegNUW | FNeg | Not
+data Unop = Neg | NegNW | Not
 
--- | An assignable value XXX consider adding a separate dereference
--- operation for pointers.
+-- | An assignable value
 data LValue =
   -- | An array (or pointer) index
     Index Exp Exp
   -- | A field in a structure
   | Field Exp !Fieldname
+  -- | Dereference a pointer
+  | Deref Exp
   -- | A local value (local variable or argument)
   | Var !Id
   -- | A global value (global variable or function)
@@ -255,9 +258,11 @@ data Exp =
   | Call Exp [Exp]
   -- | A unary operation
   | Unop !Unop Exp
-  -- | A conversion from one type to another.  XXX get rid of the from
-  -- type.  Also add a Cast instruction.
-  | Conv Type Type Exp
+  -- | A conversion from one type to another.
+  | Conv Type Exp
+  -- | Treat an expression as if it were the given type regardless of
+  -- its actual type.
+  | Cast Type Exp
   -- | An LValue
   | LValue LValue
   -- | Address of an LValue
@@ -359,18 +364,20 @@ instance Hashable ObjType where
   hash (BasicObj inner) = hashInt 1 `combine` hash inner
 
 instance Hashable Type where
+  hash (FuncType retty params) =
+    hashInt 0 `combine` hash retty `combine` hash params
   hash (StructType packed fields) =
-    hashInt 0 `combine` hash packed `combine` hashFoldable fields
+    hashInt 1 `combine` hash packed `combine` hashFoldable fields
   hash (ArrayType Nothing inner) =
-    hashInt 1 `combine` hashInt 0 `combine` hash inner
+    hashInt 2 `combine` hashInt 0 `combine` hash inner
   hash (ArrayType (Just size) inner) =
-    hashInt 1 `combine` hash size `combine` hash inner
-  hash (PtrType objtype) = hashInt 2 `combine` hash objtype
+    hashInt 2 `combine` hash size `combine` hash inner
+  hash (PtrType objtype) = hashInt 3 `combine` hash objtype
   hash (IntType signed size) =
-    hashInt 3 `combine` hash signed `combine` hash size
+    hashInt 4 `combine` hash signed `combine` hash size
   hash (IdType (Typename str)) = hash str
-  hash (FloatType size) = hashInt 4 `combine` hash size
-  hash UnitType = hashInt 5
+  hash (FloatType size) = hashInt 5 `combine` hash size
+  hash UnitType = hashInt 6
 
 instance Format Label where
   format (Label l) = "L" <> l
@@ -386,46 +393,29 @@ instance Format Globalname where
 
 instance Format Unop where
   format Neg = format "neg"
-  format NegNUW = format "negnuw"
-  format NegNSW = format "negnsw"
-  format FNeg = format "fneg"
+  format NegNW = format "negnw"
   format Not = format "not"
 
 instance Format Binop where
   format Add = format "add"
-  format AddNSW = format "addnsw"
-  format AddNUW = format "addnuw"
-  format FAdd = format "fadd"
+  format AddNW = format "addnw"
   format Sub = format "sub"
-  format SubNSW = format "subnsw"
-  format SubNUW = format "subnuw"
-  format FSub = format "fsub"
+  format SubNW = format "subnw"
   format Mul = format "mul"
-  format MulNSW = format "mulnsw"
-  format MulNUW = format "mulnuw"
-  format FMul = format "fmul"
-  format UDiv = format "udiv"
-  format SDiv = format "sdiv"
-  format FDiv = format "fdiv"
-  format UMod = format "umod"
-  format SMod = format "smod"
-  format FMod = format "fmod"
+  format MulNW = format "mulnw"
+  format Div = format "div"
+  format Mod = format "mod"
   format Shl = format "shl"
-  format LShr = format "lshr"
-  format AShr = format "ashr"
+  format Shr = format "shr"
   format And = format "and"
   format Or = format "or"
   format Xor = format "xor"
   format Eq = format "eq"
   format Neq = format "ne"
-  format UGe = format "uge"
-  format ULe = format "ule"
-  format UGt = format "ugt"
-  format ULt = format "ult"
-  format SGe = format "sge"
-  format SLe = format "sle"
-  format SGt = format "sgt"
-  format SLt = format "slt"
+  format Ge = format "ge"
+  format Le = format "le"
+  format Gt = format "gt"
+  format Lt = format "lt"
   format FOEq = format "foeq"
   format FONeq = format "foneq"
   format FOGe = format "foge"
@@ -481,12 +471,14 @@ instance Graph gr => Format (Module gr) where
       formatGlobalname fname = "@" <> (funcName (globals ! fname))
 
       formatType :: Type -> Doc
+      formatType (FuncType retty params) =
+        parenList (formatType retty) (map formatType params)
       formatType (StructType packed fields) =
         let
           mapfun (str, mut, ty) =
             mut <+> str <+> colon <+> formatType ty
           fielddocs =
-            nest 2 (sep (punctuate colon (map mapfun (elems fields))))
+            nest 2 (sep (punctuate comma (map mapfun (elems fields))))
         in
           if packed
             then sep [format "<{", fielddocs, format "}>"]
@@ -517,9 +509,12 @@ instance Graph gr => Format (Module gr) where
       formatExp (Binop op l r) =
         parens (sep [ format op,  formatExp l <> comma, formatExp r ])
       formatExp (Unop op e) = parens (hang (format op) 2 (formatExp e))
-      formatExp (Conv fromty toty inner) =
-        parens (sep [ format "conv", formatExp inner, format "from",
-                      formatType fromty, format "to", formatType toty ])
+      formatExp (Conv ty inner) =
+        parens (sep [ format "conv", formatExp inner,
+                      format "to", formatType ty ])
+      formatExp (Cast ty inner) =
+        parens (sep [ format "cast", formatExp inner,
+                      format "to", formatType ty ])
       formatExp (AddrOf l) = "addrof" <+> formatLValue l
       formatExp (LValue l) = formatLValue l
       formatExp (StructConst ty fields) =
@@ -535,9 +530,9 @@ instance Graph gr => Format (Module gr) where
       formatExp (NumConst ty n) = hang (formatType ty) 2 (format n)
 
       formatLValue :: LValue -> Doc
-      formatLValue (Index e (NumConst _ 0)) = "*" <+> formatExp e
+      formatLValue (Deref e) = "*" <+> formatExp e
       formatLValue (Index e i) = formatExp e <+> brackets (formatExp i)
-      formatLValue (Field (LValue (Index e (NumConst _ 0))) field) =
+      formatLValue (Field (LValue (Deref e)) field) =
         formatExp e <> "->" <> field
       formatLValue (Field e field) = formatExp e <> "." <> field
       formatLValue (Global g) = formatGlobalname g

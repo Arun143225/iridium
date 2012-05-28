@@ -86,6 +86,9 @@ import qualified Data.Map as Map
 import qualified LLVM.BitWriter as LLVM
 import qualified LLVM.Core as LLVM
 
+booltype :: Type
+booltype = IntType False 1
+
 constant :: Bool -> Mutability -> Bool
 constant _ Immutable = True
 constant True _ = True
@@ -489,121 +492,216 @@ toLLVM (Module { modName = name, modTypes = types, modGlobals = globals,
             genConstLValueAddr' []
 -}
         -- Generate a constant initializer for a global variable
-        genConst :: Exp -> IO LLVM.ValueRef
+        genConst :: Exp -> IO (LLVM.ValueRef, Type)
         genConst (Binop op l r) =
           do
-            l' <- genConst l
-            r' <- genConst r
-            case op of
-              Add -> return (LLVM.constAdd l' r')
-              AddNSW -> LLVM.constNSWAdd l' r'
-              AddNUW -> LLVM.constNUWAdd l' r'
-              FAdd -> return (LLVM.constFAdd l' r')
-              Sub -> return (LLVM.constSub l' r')
-              SubNSW -> LLVM.constNSWSub l' r'
-              SubNUW -> LLVM.constNUWSub l' r'
-              FSub -> return (LLVM.constFSub l' r')
-              Mul -> return (LLVM.constMul l' r')
-              MulNSW -> LLVM.constNSWMul l' r'
-              MulNUW -> LLVM.constNUWMul l' r'
-              FMul -> return (LLVM.constFMul l' r')
-              UDiv -> return (LLVM.constUDiv l' r')
-              SDiv -> return (LLVM.constSDiv l' r')
-              FDiv -> return (LLVM.constFDiv l' r')
-              UMod -> return (LLVM.constURem l' r')
-              SMod -> return (LLVM.constSRem l' r')
-              FMod -> return (LLVM.constFRem l' r')
-              And -> return (LLVM.constAnd l' r')
-              Or -> return (LLVM.constOr l' r')
-              Xor -> return (LLVM.constXor l' r')
-              Shl -> return (LLVM.constShl l' r')
-              AShr -> return (LLVM.constAShr l' r')
-              LShr -> return (LLVM.constLShr l' r')
-              Eq -> return (LLVM.constICmp LLVM.IntEQ l' r')
-              Neq -> return (LLVM.constICmp LLVM.IntNE l' r')
-              UGe -> return (LLVM.constICmp LLVM.IntUGE l' r')
-              UGt -> return (LLVM.constICmp LLVM.IntUGT l' r')
-              ULe -> return (LLVM.constICmp LLVM.IntULE l' r')
-              ULt -> return (LLVM.constICmp LLVM.IntULT l' r')
-              SGe -> return (LLVM.constICmp LLVM.IntSGE l' r')
-              SGt -> return (LLVM.constICmp LLVM.IntSGT l' r')
-              SLe -> return (LLVM.constICmp LLVM.IntSLE l' r')
-              SLt -> return (LLVM.constICmp LLVM.IntSLT l' r')
-              FOEq -> return (LLVM.constFCmp LLVM.RealOEQ l' r')
-              FONeq -> return (LLVM.constFCmp LLVM.RealONE l' r')
-              FOGe -> return (LLVM.constFCmp LLVM.RealOGE l' r')
-              FOGt -> return (LLVM.constFCmp LLVM.RealOGT l' r')
-              FOLe -> return (LLVM.constFCmp LLVM.RealOLE l' r')
-              FOLt -> return (LLVM.constFCmp LLVM.RealOLT l' r')
-              FUEq -> return (LLVM.constFCmp LLVM.RealUEQ l' r')
-              FUNeq -> return (LLVM.constFCmp LLVM.RealUNE l' r')
-              FUGe -> return (LLVM.constFCmp LLVM.RealUGE l' r')
-              FUGt -> return (LLVM.constFCmp LLVM.RealUGT l' r')
-              FULe -> return (LLVM.constFCmp LLVM.RealULE l' r')
-              FULt -> return (LLVM.constFCmp LLVM.RealULT l' r')
+            (l', lty) <- genConst l
+            (r', rty) <- genConst r
+            case (op, lty, rty) of
+              (Add, IntType _ _, IntType _ _) ->
+                return (LLVM.constAdd l' r', lty)
+              (Add, FloatType _, FloatType _) ->
+                return (LLVM.constFAdd l' r', lty)
+              (AddNW, IntType True _, IntType True _) ->
+                do
+                  out <- LLVM.constNSWAdd l' r'
+                  return (out, lty)
+              (AddNW, IntType False _, IntType False _) ->
+                do
+                  out <- LLVM.constNUWAdd l' r'
+                  return (out, lty)
+              (Sub, IntType _ _, IntType _ _) ->
+                return (LLVM.constSub l' r', lty)
+              (Sub, FloatType _, FloatType _) ->
+                return (LLVM.constFSub l' r', lty)
+              (SubNW, IntType True _, IntType True _) ->
+                do
+                  out <- LLVM.constNSWSub l' r'
+                  return (out, lty)
+              (SubNW, IntType False _, IntType False _) ->
+                do
+                  out <- LLVM.constNUWSub l' r'
+                  return (out, lty)
+              (Mul, IntType _ _, IntType _ _) ->
+                return (LLVM.constMul l' r', lty)
+              (Mul, FloatType _, FloatType _) ->
+                return (LLVM.constFMul l' r', lty)
+              (MulNW, IntType True _, IntType True _) ->
+                do
+                  out <- LLVM.constNSWMul l' r'
+                  return (out, lty)
+              (MulNW, IntType False _, IntType True _) ->
+                do
+                  out <- LLVM.constNUWMul l' r'
+                  return (out, lty)
+              (Div, IntType True _, IntType True _) ->
+                return (LLVM.constUDiv l' r', lty)
+              (Div, IntType False _, IntType False _) ->
+                return (LLVM.constSDiv l' r', lty)
+              (Div, FloatType _, FloatType _) ->
+                return (LLVM.constFDiv l' r', lty)
+              (Mod, IntType True _, IntType True _) ->
+                return (LLVM.constURem l' r', lty)
+              (Mod, IntType False _, IntType False _) ->
+                return (LLVM.constSRem l' r', lty)
+              (Mod, FloatType _, FloatType _) ->
+                return (LLVM.constFRem l' r', lty)
+              (And, IntType _ _, IntType _ _) ->
+                return (LLVM.constAnd l' r', lty)
+              (Or, IntType _ _, IntType _ _) ->
+                return (LLVM.constOr l' r', lty)
+              (Xor, IntType _ _, IntType _ _) ->
+                return (LLVM.constXor l' r', lty)
+              (Shl, IntType _ _, IntType _ _) ->
+                return (LLVM.constShl l' r', lty)
+              (Shr, IntType True _, IntType _ _) ->
+                return (LLVM.constAShr l' r', lty)
+              (Shr, IntType False _, IntType _ _) ->
+                return (LLVM.constLShr l' r', lty)
+              (Eq, IntType _ _, IntType _ _) ->
+                return (LLVM.constICmp LLVM.IntEQ l' r',
+                        booltype)
+              (Neq, IntType _ _, IntType _ _) ->
+                return (LLVM.constICmp LLVM.IntNE l' r',
+                        booltype)
+              (Ge, IntType True _, IntType True _) ->
+                return (LLVM.constICmp LLVM.IntSGE l' r',
+                        booltype)
+              (Ge, IntType False _, IntType False _) ->
+                return (LLVM.constICmp LLVM.IntUGE l' r',
+                        booltype)
+              (Gt, IntType False _, IntType False _) ->
+                return (LLVM.constICmp LLVM.IntUGT l' r',
+                        booltype)
+              (Gt, IntType True _, IntType True _) ->
+                return (LLVM.constICmp LLVM.IntSGT l' r',
+                        booltype)
+              (Le, IntType False _, IntType False _) ->
+                return (LLVM.constICmp LLVM.IntULE l' r',
+                        booltype)
+              (Le, IntType True _, IntType True _) ->
+                return (LLVM.constICmp LLVM.IntSLE l' r',
+                        booltype)
+              (Lt, IntType False _, IntType False _) ->
+                return (LLVM.constICmp LLVM.IntULT l' r',
+                        booltype)
+              (Lt, IntType True _, IntType True _) ->
+                return (LLVM.constICmp LLVM.IntSLT l' r',
+                        booltype)
+              (FOEq, FloatType _, FloatType _) ->
+                return (LLVM.constFCmp LLVM.RealOEQ l' r',
+                        booltype)
+              (FONeq, FloatType _, FloatType _) ->
+                return (LLVM.constFCmp LLVM.RealONE l' r',
+                        booltype)
+              (FOGe, FloatType _, FloatType _) ->
+                return (LLVM.constFCmp LLVM.RealOGE l' r',
+                        booltype)
+              (FOGt, FloatType _, FloatType _) ->
+                return (LLVM.constFCmp LLVM.RealOGT l' r',
+                        booltype)
+              (FOLe, FloatType _, FloatType _) ->
+                return (LLVM.constFCmp LLVM.RealOLE l' r',
+                        booltype)
+              (FOLt, FloatType _, FloatType _) ->
+                return (LLVM.constFCmp LLVM.RealOLT l' r',
+                        booltype)
+              (FUEq, FloatType _, FloatType _) ->
+                return (LLVM.constFCmp LLVM.RealUEQ l' r',
+                        booltype)
+              (FUNeq, FloatType _, FloatType _) ->
+                return (LLVM.constFCmp LLVM.RealUNE l' r',
+                        booltype)
+              (FUGe, FloatType _, FloatType _) ->
+                return (LLVM.constFCmp LLVM.RealUGE l' r',
+                        booltype)
+              (FUGt, FloatType _, FloatType _) ->
+                return (LLVM.constFCmp LLVM.RealUGT l' r',
+                        booltype)
+              (FULe, FloatType _, FloatType _) ->
+                return (LLVM.constFCmp LLVM.RealULE l' r',
+                        booltype)
+              (FULt, FloatType _, FloatType _) ->
+                return (LLVM.constFCmp LLVM.RealULT l' r',
+                        booltype)
         genConst (Unop op inner) =
           do
-            inner' <- genConst inner
-            case op of
-              Neg -> return (LLVM.constNeg inner')
-              NegNSW -> LLVM.constNSWNeg inner'
-              NegNUW -> LLVM.constNUWNeg inner'
-              FNeg -> return (LLVM.constFNeg inner')
-              Not -> return (LLVM.constNot inner')
+            (inner', ty) <- genConst inner
+            case (op, ty) of
+              (Neg, IntType _ _) -> return (LLVM.constNeg inner', ty)
+              (NegNW, IntType True _) ->
+                do
+                  out <- LLVM.constNSWNeg inner'
+                  return (inner', ty)
+              (NegNW, IntType False _) ->
+                do
+                  out <- LLVM.constNUWNeg inner'
+                  return (inner', ty)
+              (Neg, FloatType _) -> return (LLVM.constFNeg inner', ty)
+              (Not, IntType _ _) -> return (LLVM.constNot inner', ty)
         genConst (AddrOf lval) = error "Complex lvalues disabled"
 --genConstLValueAddr lval
         genConst (LValue lval) = error "Complex lvalues disabled"
 --genConstLValue lval
-        genConst (Conv fromty toty inner) =
+        genConst (Conv toty inner) =
           do
             toty' <- toLLVMType ctx typedefs toty
-            inner' <- genConst inner
+            (inner', fromty) <- genConst inner
             case (fromty, toty) of
               (IntType False fromsize, IntType _ tosize) ->
                 if fromsize > tosize
-                  then return (LLVM.constTrunc inner' toty')
+                  then return (LLVM.constTrunc inner' toty', toty)
                   else if fromsize < tosize
-                    then return (LLVM.constZExt inner' toty')
-                    else return inner'
+                    then return (LLVM.constZExt inner' toty', toty)
+                    else return (inner', toty)
               (IntType True fromsize, IntType _ tosize) ->
                 if fromsize > tosize
-                  then return (LLVM.constTrunc inner' toty')
+                  then return (LLVM.constTrunc inner' toty', toty)
                   else if fromsize < tosize
-                    then return (LLVM.constSExt inner' toty')
-                    else return inner'
+                    then return (LLVM.constSExt inner' toty', toty)
+                    else return (inner', toty)
               (FloatType fromsize, FloatType tosize) ->
                 if fromsize > tosize
-                  then return (LLVM.constFPTrunc inner' toty')
+                  then return (LLVM.constFPTrunc inner' toty', toty)
                   else if fromsize < tosize
-                    then return (LLVM.constFPExt inner' toty')
-                    else return inner'
+                    then return (LLVM.constFPExt inner' toty', toty)
+                    else return (inner', toty)
               (IntType False _, FloatType _) ->
-                return (LLVM.constUIToFP inner' toty')
+                return (LLVM.constUIToFP inner' toty', toty)
               (IntType True _, FloatType _) ->
-                return (LLVM.constSIToFP inner' toty')
+                return (LLVM.constSIToFP inner' toty', toty)
               (FloatType _, IntType False _) ->
-                return (LLVM.constFPToUI inner' toty')
+                return (LLVM.constFPToUI inner' toty', toty)
               (FloatType _, IntType True _) ->
-                return (LLVM.constFPToSI inner' toty')
+                return (LLVM.constFPToSI inner' toty', toty)
               (IntType True fromsize, PtrType _) ->
-                return (LLVM.constIntToPtr inner' toty')
+                return (LLVM.constIntToPtr inner' toty', toty)
               (PtrType _, IntType True fromsize) ->
-                return (LLVM.constPtrToInt inner' toty')
+                return (LLVM.constPtrToInt inner' toty', toty)
               (PtrType _, PtrType _) ->
-                LLVM.constPointerCast inner' toty'
-        genConst (StructConst (StructType packed _) inits) =
+                do
+                  out <- LLVM.constPointerCast inner' toty'
+                  return (out, toty)
+        genConst (Cast toty inner) =
           do
-            inits' <- mapM genConst (elems inits)
-            return (LLVM.constStruct inits' packed)
+            toty' <- toLLVMType ctx typedefs toty
+            (inner', _) <- genConst inner
+            return (LLVM.constBitCast inner' toty', toty)
+        genConst (StructConst ty @ (StructType packed _) inits) =
+          do
+            inits' <- mapM (\field -> genConst field >>= return . fst)
+                           (elems inits)
+            return (LLVM.constStruct inits' packed, ty)
         genConst (ArrayConst ty inits) =
           do
             ty' <- toLLVMType ctx typedefs ty
-            inits' <- mapM genConst inits
-            return (LLVM.constArray ty' inits')
+            inits' <- mapM (\field -> genConst field >>= return . fst)
+                           inits
+            return (LLVM.constArray ty' inits', ty)
         genConst (NumConst ty @ (IntType signed _) n) =
           do
             ty' <- toLLVMType ctx typedefs ty
-            return (LLVM.constInt ty' n signed)
+            return (LLVM.constInt ty' n signed, ty)
         genConst val = fail ("Cannot generate constant")
 
         -- Add a definition to a global.  This function does all the
@@ -614,7 +712,7 @@ toLLVM (Module { modName = name, modTypes = types, modGlobals = globals,
         -- it for the variable
         addDef _ (gname, GlobalVar { gvarName = name, gvarInit = Just exp }) =
           do
-            init <- genConst exp
+            (init, _) <- genConst exp
             LLVM.setInitializer (decls ! gname) init
         addDef builder
                (gname, Function { funcBody = Just (Body (Label entry) graph),
@@ -897,12 +995,22 @@ toLLVM (Module { modName = name, modTypes = types, modGlobals = globals,
                     extract <- LLVM.buildExtractElement builder inner fields' ""
                     LLVM.buildGEP builder extract offsets ""
 -}
+                getGlobalType :: Globalname -> Type
+                getGlobalType name =
+                  case globals ! name of
+                    Function { funcRetTy = retty, funcValTys = valtys,
+                               funcParams = params} ->
+                      FuncType retty (map ((!) valtys) params)
+                    GlobalVar { gvarTy = ty } -> ty
+
                 genLValueRead :: Map Id LLVM.ValueRef -> LValue ->
-                                 IO LLVM.ValueRef
+                                 IO (LLVM.ValueRef, Type)
                 genLValueRead valmap (Var id) =
-                  return (fromJust (Map.lookup id valmap))
-                genLValueRead valmap (Global name) =
-                  LLVM.buildLoad builder (decls ! name) ""
+                  return (fromJust (Map.lookup id valmap), valtys ! id)
+                genLValueRead _ (Global name) =
+                  do
+                    out <- LLVM.buildLoad builder (decls ! name) ""
+                    return (out, getGlobalType name)
                 genLValueRead valmap lval =
                   error "complex lvalues disabled"
 --                  genLValueAccess accessRead valmap lval
@@ -923,85 +1031,229 @@ toLLVM (Module { modName = name, modTypes = types, modGlobals = globals,
                     return valmap
 -}
                 genLValueAddr :: Map Id LLVM.ValueRef -> LValue ->
-                                 IO LLVM.ValueRef
+                                 IO (LLVM.ValueRef, Type)
                 genLValueAddr valmap (Var _) =
                   error "Address of local variables not implemented"
+                genLValueAddr _ (Global name) =
+                  return (decls ! name,
+                          PtrType (BasicObj (getGlobalType name)))
                 genLValueAddr valmap lval =
                   error "complex lvalues disabled"
 --                  genLValueAccess accessAddr valmap lval
 
                 -- Generate code for an expression
-                genExp :: Map Id LLVM.ValueRef -> Exp -> IO LLVM.ValueRef
+                genExp :: Map Id LLVM.ValueRef -> Exp -> IO (LLVM.ValueRef, Type)
                 genExp valmap (Binop op l r) =
                   do
-                    l' <- genExp valmap l
-                    r' <- genExp valmap r
-                    case op of
-                      Add -> LLVM.buildAdd builder l' r' ""
-                      AddNSW -> LLVM.buildNSWAdd builder l' r' ""
-                      AddNUW -> LLVM.buildNUWAdd builder l' r' ""
-                      FAdd -> LLVM.buildFAdd builder l' r' ""
-                      Sub -> LLVM.buildSub builder l' r' ""
-                      SubNSW -> LLVM.buildNSWSub builder l' r' ""
-                      SubNUW -> LLVM.buildNUWSub builder l' r' ""
-                      FSub -> LLVM.buildFSub builder l' r' ""
-                      Mul -> LLVM.buildMul builder l' r' ""
-                      MulNSW -> LLVM.buildNSWMul builder l' r' ""
-                      MulNUW -> LLVM.buildNUWMul builder l' r' ""
-                      FMul -> LLVM.buildFMul builder l' r' ""
-                      UDiv -> LLVM.buildUDiv builder l' r' ""
-                      SDiv -> LLVM.buildSDiv builder l' r' ""
-                      FDiv -> LLVM.buildFDiv builder l' r' ""
-                      UMod -> LLVM.buildURem builder l' r' ""
-                      SMod -> LLVM.buildSRem builder l' r' ""
-                      FMod -> LLVM.buildFRem builder l' r' ""
-                      And -> LLVM.buildAnd builder l' r' ""
-                      Or -> LLVM.buildOr builder l' r' ""
-                      Xor -> LLVM.buildXor builder l' r' ""
-                      Shl -> LLVM.buildShl builder l' r' ""
-                      LShr -> LLVM.buildLShr builder l' r' ""
-                      AShr -> LLVM.buildAShr builder l' r' ""
-                      Eq -> LLVM.buildICmp builder (LLVM.IntEQ) l' r' ""
-                      Neq -> LLVM.buildICmp builder (LLVM.IntNE) l' r' ""
-                      UGe -> LLVM.buildICmp builder (LLVM.IntUGE) l' r' ""
-                      ULe -> LLVM.buildICmp builder (LLVM.IntULE) l' r' ""
-                      UGt -> LLVM.buildICmp builder (LLVM.IntUGT) l' r' ""
-                      ULt -> LLVM.buildICmp builder (LLVM.IntULT) l' r' ""
-                      SGe -> LLVM.buildICmp builder (LLVM.IntSGE) l' r' ""
-                      SLe -> LLVM.buildICmp builder (LLVM.IntSLE) l' r' ""
-                      SGt -> LLVM.buildICmp builder (LLVM.IntSGT) l' r' ""
-                      SLt -> LLVM.buildICmp builder (LLVM.IntSLT) l' r' ""
-                      FOEq -> LLVM.buildFCmp builder (LLVM.RealOEQ) l' r' ""
-                      FONeq -> LLVM.buildFCmp builder (LLVM.RealONE) l' r' ""
-                      FOGe -> LLVM.buildFCmp builder (LLVM.RealOGE) l' r' ""
-                      FOLe -> LLVM.buildFCmp builder (LLVM.RealOLE) l' r' ""
-                      FOGt -> LLVM.buildFCmp builder (LLVM.RealOGT) l' r' ""
-                      FOLt -> LLVM.buildFCmp builder (LLVM.RealOLT) l' r' ""
-                      FUEq -> LLVM.buildFCmp builder (LLVM.RealUEQ) l' r' ""
-                      FUNeq -> LLVM.buildFCmp builder (LLVM.RealUNE) l' r' ""
-                      FUGe -> LLVM.buildFCmp builder (LLVM.RealUGE) l' r' ""
-                      FULe -> LLVM.buildFCmp builder (LLVM.RealULE) l' r' ""
-                      FUGt -> LLVM.buildFCmp builder (LLVM.RealUGT) l' r' ""
-                      FULt -> LLVM.buildFCmp builder (LLVM.RealULT) l' r' ""
+                    (l', lty) <- genExp valmap l
+                    (r', rty) <- genExp valmap r
+                    case (op, lty, rty) of
+                      (Add, IntType _ _, IntType _ _) ->
+                        do
+                          out <- LLVM.buildAdd builder l' r' ""
+                          return (out, lty)
+                      (Add, FloatType _, FloatType _) ->
+                        do
+                          out <- LLVM.buildFAdd builder l' r' ""
+                          return (out, lty)
+                      (AddNW, IntType True _, IntType True _) ->
+                        do
+                          out <- LLVM.buildNSWAdd builder l' r' ""
+                          return (out, lty)
+                      (AddNW, IntType False _, IntType False _) ->
+                        do
+                          out <- LLVM.buildNUWAdd builder l' r' ""
+                          return (out, lty)
+                      (Sub, IntType _ _, IntType _ _) ->
+                        do
+                          out <- LLVM.buildSub builder l' r' ""
+                          return (out, lty)
+                      (Sub, FloatType _, FloatType _) ->
+                        do
+                          out <- LLVM.buildFSub builder l' r' ""
+                          return (out, lty)
+                      (SubNW, IntType True _, IntType True _) ->
+                        do
+                          out <- LLVM.buildNSWSub builder l' r' ""
+                          return (out, lty)
+                      (SubNW, IntType False _, IntType False _) ->
+                        do
+                          out <- LLVM.buildNUWSub builder l' r' ""
+                          return (out, lty)
+                      (Mul, IntType _ _, IntType _ _) ->
+                        do
+                          out <- LLVM.buildMul builder l' r' ""
+                          return (out, lty)
+                      (Mul, FloatType _, FloatType _) ->
+                        do
+                          out <- LLVM.buildFMul builder l' r' ""
+                          return (out, lty)
+                      (MulNW, IntType True _, IntType True _) ->
+                        do
+                          out <- LLVM.buildNSWMul builder l' r' ""
+                          return (out, lty)
+                      (MulNW, IntType False _, IntType False _) ->
+                        do
+                          out <- LLVM.buildNUWMul builder l' r' ""
+                          return (out, lty)
+                      (Div, IntType True _, IntType True _) ->
+                        do
+                          out <- LLVM.buildSDiv builder l' r' ""
+                          return (out, lty)
+                      (Div, IntType False _, IntType False _) ->
+                        do
+                          out <- LLVM.buildUDiv builder l' r' ""
+                          return (out, lty)
+                      (Div, FloatType _, FloatType _) ->
+                        do
+                          out <- LLVM.buildFDiv builder l' r' ""
+                          return (out, lty)
+                      (Mod, IntType True _, IntType True _) ->
+                        do
+                          out <- LLVM.buildSRem builder l' r' ""
+                          return (out, lty)
+                      (Mod, IntType False _, IntType False _) ->
+                        do
+                          out <- LLVM.buildURem builder l' r' ""
+                          return (out, lty)
+                      (Mod, FloatType _, FloatType _) ->
+                        do
+                          out <- LLVM.buildFRem builder l' r' ""
+                          return (out, lty)
+                      (And, IntType _ _, IntType _ _) ->
+                        do
+                          out <- LLVM.buildAnd builder l' r' ""
+                          return (out, lty)
+                      (Or, IntType _ _, IntType _ _) ->
+                        do
+                          out <- LLVM.buildOr builder l' r' ""
+                          return (out, lty)
+                      (Xor, IntType _ _, IntType _ _) ->
+                        do
+                          out <- LLVM.buildXor builder l' r' ""
+                          return (out, lty)
+                      (Shl, IntType _ _, IntType _ _) ->
+                        do
+                          out <- LLVM.buildShl builder l' r' ""
+                          return (out, lty)
+                      (Shr, IntType True _, IntType _ _) ->
+                        do
+                          out <- LLVM.buildAShr builder l' r' ""
+                          return (out, lty)
+                      (Shr, IntType False _, IntType _ _) ->
+                        do
+                          out <- LLVM.buildLShr builder l' r' ""
+                          return (out, lty)
+                      (Eq, IntType _ _, IntType _ _) ->
+                        do
+                          out <- LLVM.buildICmp builder (LLVM.IntEQ) l' r' ""
+                          return (out, lty)
+                      (Neq, IntType _ _, IntType _ _) ->
+                        do
+                          out <- LLVM.buildICmp builder (LLVM.IntNE) l' r' ""
+                          return (out, lty)
+                      (Ge, IntType True _, IntType True _) ->
+                        do
+                          out <- LLVM.buildICmp builder (LLVM.IntSGE) l' r' ""
+                          return (out, booltype)
+                      (Ge, IntType False _, IntType False _) ->
+                        do
+                          out <- LLVM.buildICmp builder (LLVM.IntUGE) l' r' ""
+                          return (out, booltype)
+                      (Gt, IntType True _, IntType True _) ->
+                        do
+                          out <- LLVM.buildICmp builder (LLVM.IntSGT) l' r' ""
+                          return (out, booltype)
+                      (Gt, IntType False _, IntType False _) ->
+                        do
+                          out <- LLVM.buildICmp builder (LLVM.IntUGT) l' r' ""
+                          return (out, booltype)
+                      (Le, IntType True _, IntType True _) ->
+                        do
+                          out <- LLVM.buildICmp builder (LLVM.IntSLE) l' r' ""
+                          return (out, booltype)
+                      (Le, IntType False _, IntType False _) ->
+                        do
+                          out <- LLVM.buildICmp builder (LLVM.IntULE) l' r' ""
+                          return (out, booltype)
+                      (Lt, IntType True _, IntType True _) ->
+                        do
+                          out <- LLVM.buildICmp builder (LLVM.IntSLT) l' r' ""
+                          return (out, booltype)
+                      (Lt, IntType False _, IntType False _) ->
+                        do
+                          out <- LLVM.buildICmp builder (LLVM.IntULT) l' r' ""
+                          return (out, booltype)
+                      (FOEq, FloatType _, FloatType _) ->
+                        do
+                          out <- LLVM.buildFCmp builder (LLVM.RealOEQ) l' r' ""
+                          return (out, booltype)
+                      (FONeq, FloatType _, FloatType _) ->
+                        do
+                          out <- LLVM.buildFCmp builder (LLVM.RealONE) l' r' ""
+                          return (out, booltype)
+                      (FOGe, FloatType _, FloatType _) ->
+                        do
+                          out <- LLVM.buildFCmp builder (LLVM.RealOGE) l' r' ""
+                          return (out, booltype)
+                      (FOLe, FloatType _, FloatType _) ->
+                        do
+                          out <- LLVM.buildFCmp builder (LLVM.RealOLE) l' r' ""
+                          return (out, booltype)
+                      (FOGt, FloatType _, FloatType _) ->
+                        do
+                          out <- LLVM.buildFCmp builder (LLVM.RealOGT) l' r' ""
+                          return (out, booltype)
+                      (FOLt, FloatType _, FloatType _) ->
+                        do
+                          out <- LLVM.buildFCmp builder (LLVM.RealOLT) l' r' ""
+                          return (out, booltype)
+                      (FUEq, FloatType _, FloatType _) ->
+                        do
+                          out <- LLVM.buildFCmp builder (LLVM.RealUEQ) l' r' ""
+                          return (out, booltype)
+                      (FUNeq, FloatType _, FloatType _) ->
+                        do
+                          out <- LLVM.buildFCmp builder (LLVM.RealUNE) l' r' ""
+                          return (out, booltype)
+                      (FUGe, FloatType _, FloatType _) ->
+                        do
+                          out <- LLVM.buildFCmp builder (LLVM.RealUGE) l' r' ""
+                          return (out, booltype)
+                      (FULe, FloatType _, FloatType _) ->
+                        do
+                          out <- LLVM.buildFCmp builder (LLVM.RealULE) l' r' ""
+                          return (out, booltype)
+                      (FUGt, FloatType _, FloatType _) ->
+                        do
+                          out <- LLVM.buildFCmp builder (LLVM.RealUGT) l' r' ""
+                          return (out, booltype)
+                      (FULt, FloatType _, FloatType _) ->
+                        do
+                          out <- LLVM.buildFCmp builder (LLVM.RealULT) l' r' ""
+                          return (out, booltype)
                 genExp valmap (Call func args) =
                   do
-                    func' <- genExp valmap func
-                    args' <- mapM (genExp valmap) args
-                    LLVM.buildCall builder func' args' ""
+                    (func', FuncType retty _) <- genExp valmap func
+                    args' <- mapM (\param -> genExp valmap param >>= return . fst)
+                                  args
+                    out <- LLVM.buildCall builder func' args' ""
+                    return (out, retty)
                 genExp valmap (Unop op inner) =
                   do
-                    inner' <- genExp valmap inner
-                    case op of
-                      Neg -> LLVM.buildNeg builder inner' ""
-                      NegNSW -> LLVM.buildNSWNeg builder inner' ""
-                      NegNUW -> LLVM.buildNUWNeg builder inner' ""
-                      FNeg -> LLVM.buildFNeg builder inner' ""
-                      Not -> LLVM.buildNot builder inner' ""
-                genExp valmap (Conv fromty toty inner) =
+                    (inner', ty) <- genExp valmap inner
+                    out <- case (op, ty) of
+                      (Neg, IntType _ _) -> LLVM.buildNeg builder inner' ""
+                      (Neg, FloatType _) -> LLVM.buildFNeg builder inner' ""
+                      (NegNW, IntType True _) -> LLVM.buildNSWNeg builder inner' ""
+                      (NegNW, IntType False _) -> LLVM.buildNUWNeg builder inner' ""
+                      (Not, IntType _ _) -> LLVM.buildNot builder inner' ""
+                    return (out, ty)
+                genExp valmap (Conv toty inner) =
                   do
                     toty' <- toLLVMType ctx typedefs toty
-                    inner' <- genExp valmap inner
-                    case (fromty, toty) of
+                    (inner', fromty) <- genExp valmap inner
+                    out <- case (fromty, toty) of
                       (IntType False fromsize, IntType _ tosize) ->
                         if fromsize > tosize
                           then LLVM.buildTrunc builder inner' toty' ""
@@ -1034,21 +1286,24 @@ toLLVM (Module { modName = name, modTypes = types, modGlobals = globals,
                         LLVM.buildPtrToInt builder inner' toty' ""
                       (PtrType _, PtrType _) ->
                         LLVM.buildPointerCast builder inner' toty' ""
+                    return (out, toty)
                 genExp valmap (LValue lval) = genLValueRead valmap lval
                 genExp valmap (AddrOf lval) = genLValueAddr valmap lval
-                genExp valmap (StructConst (StructType packed _) inits) =
+                genExp valmap (StructConst ty @ (StructType packed _) inits) =
                   do
-                    inits' <- mapM (genExp valmap) (elems inits)
-                    return (LLVM.constStruct inits' packed)
+                    inits' <- mapM (\param -> genExp valmap param >>= return . fst)
+                                   (elems inits)
+                    return (LLVM.constStruct inits' packed, ty)
                 genExp valmap (ArrayConst ty inits) =
                   do
-                    inits' <- mapM (genExp valmap) inits
+                    inits' <- mapM (\param -> genExp valmap param >>= return . fst)
+                                   inits
                     ty' <- toLLVMType ctx typedefs ty
-                    return (LLVM.constArray ty' inits')
+                    return (LLVM.constArray ty' inits', ty)
                 genExp _ (NumConst ty @ (IntType signed _) n) =
                   do
                     ty' <- toLLVMType ctx typedefs ty
-                    return (LLVM.constInt ty' n signed)
+                    return (LLVM.constInt ty' n signed, ty)
 
                 genStm :: Map Id LLVM.ValueRef -> Stm ->
                           IO (Map Id LLVM.ValueRef)
@@ -1058,7 +1313,7 @@ toLLVM (Module { modName = name, modTypes = types, modGlobals = globals,
                     return valmap
                 genStm valmap (Move lval rval) =
                   do
-                    rval' <- genExp valmap rval
+                    (rval', _) <- genExp valmap rval
                     genLValueWrite valmap rval' lval
 
                 -- Generate code for a transfer
@@ -1068,7 +1323,7 @@ toLLVM (Module { modName = name, modTypes = types, modGlobals = globals,
                   LLVM.buildBr builder (blocks ! l)
                 genTransfer valmap (Case test cases (Label def)) =
                   do
-                    testval <- genExp valmap test
+                    (testval, _) <- genExp valmap test
                     case cases of
                       [(0, Label falsel)] ->
                         LLVM.buildCondBr builder testval (blocks ! def)
@@ -1091,7 +1346,7 @@ toLLVM (Module { modName = name, modTypes = types, modGlobals = globals,
                           return switch
                 genTransfer valmap (Ret (Just ret)) =
                   do
-                    retval <- genExp valmap ret
+                    (retval, _) <- genExp valmap ret
                     LLVM.buildRet builder retval
                 genTransfer valmap (Ret Nothing) = LLVM.buildRetVoid builder
                 genTransfer valmap Unreachable = LLVM.buildUnreachable builder
