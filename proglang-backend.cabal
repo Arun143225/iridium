@@ -1,0 +1,22 @@
+Name:                proglang-backend
+Version:             0.0.0.0
+Synopsis:            Intermediate representations and facilities for
+                     compiling programming languages
+Description:
+  This package contains intermediate representations, transformations,
+  and compilation utilities.  It is intended to be used to compile
+  programming languages down to LLVM.
+
+  This package is a work in progress.
+License:             BSD3
+Author:              Eric McCorkle
+Maintainer:          eric@shadowsun.net
+Stability:           Pre-alpha
+Category:            Development
+Build-type:          Simple
+Cabal-version:       >= 1.9.2
+
+Library
+  build-depends:        base, haskell98, mtl, data-hash, pretty, fgl, array,
+                        bitarray, proglang-util, llvm-bindings, containers
+  exposed-modules:      SimpleIR, SimpleIR.LLVMGen
