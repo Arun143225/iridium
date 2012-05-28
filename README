@@ -12,8 +12,7 @@ others are planned.
    instructions correspond to LLVM's.  However, SimpleIR has mutable
    variables, supports variant types (not implemented), and allows
    variables of any type (not implemented).  Also, it makes
-   instruction selection decisions based on the types of arguments
-   (not implemented).
+   instruction selection decisions based on the types of arguments.
 
    Simple IR also contains rather elaborate information pertaining to
    garbage collection.
