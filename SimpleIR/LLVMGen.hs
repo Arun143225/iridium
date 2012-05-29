@@ -66,8 +66,10 @@ module SimpleIR.LLVMGen(
        toLLVM
        ) where
 
-import Data.Array
+import Data.Array(Array)
+import Data.Array.IArray
 import Data.Array.IO
+import Data.Array.Unboxed(UArray)
 import Data.BitArray.IO
 import Data.Foldable
 import Data.Graph.Inductive.Graph
@@ -101,11 +103,11 @@ toLLVM (Module { modName = name, modTypes = types, modGlobals = globals,
   let
     -- First thing: run through all the named types, and generate
     -- LLVM.TypeRefs for all of them
-    genTypeDefs :: LLVM.ContextRef -> IO (Array Typename LLVM.TypeRef)
+    genTypeDefs :: LLVM.ContextRef -> IO (UArray Typename LLVM.TypeRef)
     genTypeDefs ctx =
       let
         -- Fill in the array of types
-        initTypeArray :: IOArray Typename LLVM.TypeRef -> IO ()
+        initTypeArray :: IOUArray Typename LLVM.TypeRef -> IO ()
         initTypeArray typemap =
           let
             -- Translate a SimpleIR type into an LLVM type.  We need
@@ -297,7 +299,7 @@ toLLVM (Module { modName = name, modTypes = types, modGlobals = globals,
 
     -- Generate an array mapping GCHeaders to llvm globals
     gcHeaders :: LLVM.ModuleRef -> LLVM.ContextRef ->
-                 Array Typename LLVM.TypeRef ->
+                 UArray Typename LLVM.TypeRef ->
                  IO (Array GCHeader LLVM.ValueRef)
     gcHeaders mod ctx typemap =
       let
@@ -327,7 +329,7 @@ toLLVM (Module { modName = name, modTypes = types, modGlobals = globals,
 
     -- Now that we have the complete type array, we can properly
     -- translate types.
-    toLLVMType :: LLVM.ContextRef -> Array Typename LLVM.TypeRef -> Type ->
+    toLLVMType :: LLVM.ContextRef -> UArray Typename LLVM.TypeRef -> Type ->
                   IO LLVM.TypeRef
     toLLVMType ctx types =
       let
@@ -369,7 +371,7 @@ toLLVM (Module { modName = name, modTypes = types, modGlobals = globals,
     -- Run over all the global values, and generate declarations for
     -- them all.
     genDecl :: Graph gr => LLVM.ModuleRef -> LLVM.ContextRef ->
-                           Array Typename LLVM.TypeRef -> Global gr ->
+                           UArray Typename LLVM.TypeRef -> Global gr ->
                            IO LLVM.ValueRef
     genDecl mod ctx typedefs (Function { funcName = name, funcRetTy = resty,
                                          funcParams = args,
@@ -385,7 +387,7 @@ toLLVM (Module { modName = name, modTypes = types, modGlobals = globals,
 
     -- Generate the accessors and modifiers for the given type
     genAccModDecls :: LLVM.ModuleRef -> LLVM.ContextRef ->
-                      Array Typename LLVM.TypeRef -> IO ()
+                      UArray Typename LLVM.TypeRef -> IO ()
     genAccModDecls mod ctx typedefs =
       let
         genAccMods :: (Typename, (String, Maybe Type)) -> IO ()
@@ -439,7 +441,7 @@ toLLVM (Module { modName = name, modTypes = types, modGlobals = globals,
 
     -- Actually generate the definitions for all globals
     genDefs :: LLVM.ContextRef -> Array Globalname LLVM.ValueRef ->
-               Array Typename LLVM.TypeRef -> IO ()
+               UArray Typename LLVM.TypeRef -> IO ()
     genDefs ctx decls typedefs =
       let
         -- Generates a constant for use in GEP and extract/insertvalue
@@ -727,7 +729,7 @@ toLLVM (Module { modName = name, modTypes = types, modGlobals = globals,
             valids = indices valtys
 
             -- First, map each CFG block to an LLVM basic block
-            genBlocks :: IO (Array Node LLVM.BasicBlockRef)
+            genBlocks :: IO (UArray Node LLVM.BasicBlockRef)
             genBlocks =
               let
                 genBlock :: Node -> IO (Node, LLVM.BasicBlockRef)
@@ -745,6 +747,8 @@ toLLVM (Module { modName = name, modTypes = types, modGlobals = globals,
             buildPhiSets =
               let
                 domfronts' = domFrontiers graph entry
+
+                domfronts :: Array Node [Node]
                 domfronts = array range domfronts'
 
                 getIndex :: Node -> Id -> Int
@@ -799,7 +803,7 @@ toLLVM (Module { modName = name, modTypes = types, modGlobals = globals,
 
             -- Generate the phi instructions required by a phi-set,
             -- add them to a phi-map array.
-            genPhis :: Array Node LLVM.BasicBlockRef ->
+            genPhis :: UArray Node LLVM.BasicBlockRef ->
                        Array Id LLVM.TypeRef -> [(Node, [Id])] ->
                        IO (Array Node [(Id, LLVM.ValueRef)])
             genPhis blocks tyarr phiset =
@@ -821,7 +825,7 @@ toLLVM (Module { modName = name, modTypes = types, modGlobals = globals,
                 return (array (bounds blocks) vals)
 
             -- Generate the instructions for a basic block
-            genInstrs :: Array Node LLVM.BasicBlockRef ->
+            genInstrs :: UArray Node LLVM.BasicBlockRef ->
                          Array Node [(Id, LLVM.ValueRef)] ->
                          Array Id LLVM.TypeRef ->
                          LLVM.BasicBlockRef -> LLVM.BuilderRef -> IO ()
