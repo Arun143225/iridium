@@ -43,8 +43,6 @@
 --     aggregates need to be alloca'ed
 --   * Escape analysis to figure out what needs to be alloca'ed
 --   * Storing local variables in alloca'ed slots at all
---   * Type-driven compilation
---   * Use unboxed arrays
 --
 -- Notes:
 --   * For aggregates-as-values, insert a value in the value map
@@ -81,7 +79,7 @@ import Data.Traversable
 import Data.Tree
 import Data.Word
 import Foreign.Ptr
-import Prelude hiding (mapM_, mapM, foldr)
+import Prelude hiding (mapM_, mapM, foldr, sequence)
 import SimpleIR
 
 import qualified Data.Map as Map
@@ -95,6 +93,13 @@ constant :: Bool -> Mutability -> Bool
 constant _ Immutable = True
 constant True _ = True
 constant _ _ = False
+
+data Location =
+    Local LLVM.ValueRef
+  | Memory !Bool LLVM.ValueRef
+  | Struct (UArray Fieldname Word)
+
+type ValMap = Map Word Location
 
 -- | Generate LLVM IR from the SimpleIR module.
 toLLVM :: Graph gr => Module gr -> IO LLVM.ModuleRef
@@ -824,56 +829,100 @@ toLLVM (Module { modName = name, modTypes = types, modGlobals = globals,
                 vals <- mapM mapblocks phiset
                 return (array (bounds blocks) vals)
 
+            -- The initial value map contains just the arguments,
+            -- and undefs for everything else.
+            initValMap :: LLVM.BuilderRef -> IO (Word, ValMap)
+            initValMap builder =
+              let
+                -- Add arguments to the value map
+                addArg :: (Word, ValMap) -> (Int, Id) -> IO (Word, ValMap)
+                addArg vmap (arg, id @ (Id ind)) =
+                  let
+                    paramty = valtys ! id
+                    param = LLVM.getParam func arg
+
+                    getArgVal :: LLVM.ValueRef -> Type -> (Word, ValMap) ->
+                                 IO (Location, Word, ValMap)
+                    getArgVal baseval (StructType _ fields) vmap =
+                      let
+                        foldfun (vmap, inds) (Fieldname field,
+                                              (_, _, fieldty)) =
+                          do
+                            newbase <- LLVM.buildExtractValue builder
+                                       baseval field ""
+                            (loc, newind, valmap) <-
+                              getArgVal newbase fieldty vmap
+                            return ((newind + 1, Map.insert newind loc valmap),
+                                    newind : inds)
+                      in do
+                        ((newind, valmap), fieldlist) <-
+                          foldlM foldfun (vmap, []) (assocs fields)
+                        return (Struct (listArray (bounds fields)
+                                                  (reverse fieldlist)),
+                                newind, valmap)
+                    getArgVal baseval _ (newind, valmap) =
+                      return (Local baseval, newind, valmap)
+                  in do
+                    (loc, newind, valmap) <- getArgVal param paramty vmap
+                    return (newind, Map.insert ind loc valmap)
+
+                getVal :: Type -> (Word, ValMap) -> IO (Location, Word, ValMap)
+                getVal (StructType _ fields) vmap =
+                  let
+                    foldfun (vmap, inds) (Fieldname field, (_, _, fieldty)) =
+                      do
+                        (loc, newind, valmap) <- getVal fieldty vmap
+                        return ((newind + 1, Map.insert newind loc valmap),
+                                newind : inds)
+
+                  in do
+                    ((newind, valmap), fieldlist) <-
+                      foldlM foldfun (vmap, []) (assocs fields)
+                    return (Struct (listArray (bounds fields)
+                                              (reverse fieldlist)),
+                            newind, valmap)
+                getVal ty (newind, valmap) =
+                  do
+                    ty' <- toLLVMType ctx typedefs ty
+                    return (Local (LLVM.getUndef ty'), newind, valmap)
+
+                -- Add undef values in for everything else
+                addUndef :: (Word, ValMap) -> Id -> IO (Word, ValMap)
+                addUndef vmap @ (_, valmap) id @ (Id ind) =
+                  case Map.lookup ind valmap of
+                    Just val -> return vmap
+                    Nothing ->
+                      do
+                        (loc, newind, valmap) <- getVal (valtys ! id) vmap
+                        return (newind, Map.insert ind loc valmap)
+
+                (_, Id maxval) = bounds valtys
+                init = (maxval + 1, Map.empty)
+                arginds = zip [0..length params] params
+              in do
+                withArgs <- foldlM addArg init arginds
+                foldlM addUndef withArgs (indices valtys)
+
             -- Generate the instructions for a basic block
             genInstrs :: UArray Node LLVM.BasicBlockRef ->
                          Array Node [(Id, LLVM.ValueRef)] ->
-                         Array Id LLVM.TypeRef ->
-                         LLVM.BasicBlockRef -> LLVM.BuilderRef -> IO ()
-            genInstrs blocks phiarr tyarr entryblock builder =
+                         Array Id LLVM.TypeRef -> LLVM.BasicBlockRef ->
+                         LLVM.BuilderRef -> ValMap -> IO ()
+            genInstrs blocks phiarr tyarr entryblock builder valmap =
               let
-                indexes = indices tyarr
-
-                -- The initial value map contains just the arguments,
-                -- and undefs for everything else.
-                -- XXX later on, we'll have to add alloca's to this
-                initValMap :: Map Id LLVM.ValueRef
-                initValMap =
-                  let
-                    addArg :: (Int, Id) -> Map Id LLVM.ValueRef ->
-                              Map Id LLVM.ValueRef
-                    addArg (arg, id) =
-                      let
-                        param = LLVM.getParam func arg
-                      in
-                        Map.insert id param
-
-                    addUndefs :: Id -> Map Id LLVM.ValueRef ->
-                                 Map Id LLVM.ValueRef
-                    addUndefs id valmap =
-                      case Map.lookup id valmap of
-                        Just val -> valmap
-                        Nothing ->
-                          Map.insert id (LLVM.getUndef (tyarr ! id)) valmap
-
-                    withArgs = foldr addArg Map.empty
-                                     (zip [0..length params] params)
-                  in
-                    foldr addUndefs withArgs indexes
-
                 -- Take the value map, and add the incoming edges to a
                 -- successor block.  Called when leaving a block on
                 -- all its successors.
-                bindPhis :: LLVM.BasicBlockRef -> Map Id LLVM.ValueRef ->
-                            Node -> IO ()
+                bindPhis :: LLVM.BasicBlockRef -> ValMap -> Node -> IO ()
                 bindPhis from valmap to =
                   let
                     phis = phiarr ! to
                     fromval = LLVM.basicBlockAsValue from
 
                     bindPhi :: (Id, LLVM.ValueRef) -> IO ()
-                    bindPhi (id, phival) =
+                    bindPhi (Id ind, phival) =
                       let
-                        Just oldval = Map.lookup id valmap
+                        Just (Local oldval) = Map.lookup ind valmap
                       in do
                         LLVM.addIncoming phival [(oldval, fromval)]
                   in
@@ -881,17 +930,18 @@ toLLVM (Module { modName = name, modTypes = types, modGlobals = globals,
 
                 -- Replace all values with corresponding phis when
                 -- entering a block.
-                addPhiVals :: Node -> Map Id LLVM.ValueRef ->
-                              Map Id LLVM.ValueRef
+                addPhiVals :: Node -> ValMap -> ValMap
                 addPhiVals node valmap =
                   let
                     phis = phiarr ! node
 
-                    addPhi :: (Id, LLVM.ValueRef) -> Map Id LLVM.ValueRef ->
-                              Map Id LLVM.ValueRef
-                    addPhi (id, phival) = Map.insert id phival
+                    addPhi :: (Id, LLVM.ValueRef) -> ValMap -> ValMap
+                    addPhi (Id ind, phival) = Map.insert ind (Local phival)
                   in do
                     foldr addPhi valmap phis
+
+                -- XXX Reinstate these functions, use the value map to
+                -- figure out where to get values from.
 {-
                 -- Descend an LValue and call an access generator
                 -- function on the results.  This allows the descent
@@ -1007,10 +1057,17 @@ toLLVM (Module { modName = name, modTypes = types, modGlobals = globals,
                       FuncType retty (map ((!) valtys) params)
                     GlobalVar { gvarTy = ty } -> ty
 
-                genLValueRead :: Map Id LLVM.ValueRef -> LValue ->
-                                 IO (LLVM.ValueRef, Type)
-                genLValueRead valmap (Var id) =
-                  return (fromJust (Map.lookup id valmap), valtys ! id)
+                genLValueRead :: ValMap -> LValue -> IO (LLVM.ValueRef, Type)
+                genLValueRead valmap (Var id @ (Id ind)) =
+                  let
+                    ty = valtys ! id
+                  in case Map.lookup ind valmap of
+                    Just (Local val) -> return (val, ty)
+                    Just (Memory volatile addr) ->
+                      do
+                        val <- LLVM.buildLoad builder addr ""
+                        LLVM.setVolatile val volatile
+                        return (val, ty)
                 genLValueRead _ (Global name) =
                   do
                     out <- LLVM.buildLoad builder (decls ! name) ""
@@ -1019,10 +1076,16 @@ toLLVM (Module { modName = name, modTypes = types, modGlobals = globals,
                   error "complex lvalues disabled"
 --                  genLValueAccess accessRead valmap lval
 
-                genLValueWrite :: Map Id LLVM.ValueRef -> LLVM.ValueRef ->
-                                  LValue -> IO (Map Id LLVM.ValueRef)
-                genLValueWrite valmap val (Var id) =
-                  return (Map.insert id val valmap)
+                genLValueWrite :: ValMap -> LLVM.ValueRef -> LValue -> IO ValMap
+                genLValueWrite valmap val (Var (Id id)) =
+                  case Map.lookup id valmap of
+                    Just (Local _) ->
+                      return (Map.insert id (Local val) valmap)
+                    Just (Memory volatile addr) ->
+                      do
+                        store <- LLVM.buildStore builder val addr
+                        LLVM.setVolatile store volatile
+                        return valmap
                 genLValueWrite valmap val (Global name) =
                   do
                     LLVM.buildStore builder val (decls ! name)
@@ -1034,10 +1097,13 @@ toLLVM (Module { modName = name, modTypes = types, modGlobals = globals,
                     genLValueAccess (accessWrite val) valmap lval
                     return valmap
 -}
-                genLValueAddr :: Map Id LLVM.ValueRef -> LValue ->
+                genLValueAddr :: ValMap -> LValue ->
                                  IO (LLVM.ValueRef, Type)
-                genLValueAddr valmap (Var _) =
-                  error "Address of local variables not implemented"
+                genLValueAddr valmap (Var id @ (Id ind)) =
+                  case Map.lookup ind valmap of
+                    (Just (Memory _ val)) ->
+                      return (val, PtrType (BasicObj (valtys ! id)))
+                    _ -> error "Taking address of non-addressable value"
                 genLValueAddr _ (Global name) =
                   return (decls ! name,
                           PtrType (BasicObj (getGlobalType name)))
@@ -1046,7 +1112,7 @@ toLLVM (Module { modName = name, modTypes = types, modGlobals = globals,
 --                  genLValueAccess accessAddr valmap lval
 
                 -- Generate code for an expression
-                genExp :: Map Id LLVM.ValueRef -> Exp -> IO (LLVM.ValueRef, Type)
+                genExp :: ValMap -> Exp -> IO (LLVM.ValueRef, Type)
                 genExp valmap (Binop op l r) =
                   do
                     (l', lty) <- genExp valmap l
@@ -1309,8 +1375,7 @@ toLLVM (Module { modName = name, modTypes = types, modGlobals = globals,
                     ty' <- toLLVMType ctx typedefs ty
                     return (LLVM.constInt ty' n signed, ty)
 
-                genStm :: Map Id LLVM.ValueRef -> Stm ->
-                          IO (Map Id LLVM.ValueRef)
+                genStm :: ValMap -> Stm -> IO ValMap
                 genStm valmap (Do e) =
                   do
                     genExp valmap e
@@ -1321,8 +1386,7 @@ toLLVM (Module { modName = name, modTypes = types, modGlobals = globals,
                     genLValueWrite valmap rval' lval
 
                 -- Generate code for a transfer
-                genTransfer :: Map Id LLVM.ValueRef -> Transfer ->
-                               IO LLVM.ValueRef
+                genTransfer :: ValMap -> Transfer -> IO LLVM.ValueRef
                 genTransfer valmap (Goto (Label l)) =
                   LLVM.buildBr builder (blocks ! l)
                 genTransfer valmap (Case test cases (Label def)) =
@@ -1356,8 +1420,7 @@ toLLVM (Module { modName = name, modTypes = types, modGlobals = globals,
                 genTransfer valmap Unreachable = LLVM.buildUnreachable builder
 
                 -- Traverse the CFG.  This takes a DFS tree as an argument.
-                traverse :: LLVM.BasicBlockRef -> Map Id LLVM.ValueRef ->
-                            Tree Node -> IO ()
+                traverse :: LLVM.BasicBlockRef -> ValMap -> Tree Node -> IO ()
                 traverse from invalmap (Node { rootLabel = curr,
                                                subForest = nexts }) =
                   let
@@ -1372,17 +1435,18 @@ toLLVM (Module { modName = name, modTypes = types, modGlobals = globals,
                     mapM_ (bindPhis currblock valmap) outs
                     mapM_ (traverse currblock valmap) nexts
               in do
-                bindPhis entryblock initValMap entrynode
-                traverse entryblock initValMap dfstree
+                bindPhis entryblock valmap entrynode
+                traverse entryblock valmap dfstree
           in do
             tyarr <- mapM (toLLVMType ctx typedefs) valtys
             entryblock <- LLVM.appendBasicBlockInContext ctx func "entry"
             blocks <- genBlocks
+            LLVM.positionAtEnd builder entryblock
+            (numvals, valmap) <- initValMap builder
+            LLVM.buildBr builder (blocks ! entrynode)
             phiset <- buildPhiSets
             phiarr <- genPhis blocks tyarr phiset
-            LLVM.positionAtEnd builder entryblock
-            LLVM.buildBr builder (blocks ! entrynode)
-            genInstrs blocks phiarr tyarr entryblock builder
+            genInstrs blocks phiarr tyarr entryblock builder valmap
       in do
         builder <- LLVM.createBuilderInContext ctx
         mapM_ (addDef builder) (assocs globals)
