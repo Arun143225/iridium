@@ -79,7 +79,7 @@ import Data.Traversable
 import Data.Tree
 import Data.Word
 import Foreign.Ptr
-import Prelude hiding (mapM_, mapM, foldr, sequence)
+import Prelude hiding (mapM_, mapM, foldr, foldl, sequence)
 import SimpleIR
 
 import qualified Data.Map as Map
@@ -452,17 +452,36 @@ toLLVM (Module { modName = name, modTypes = types, modGlobals = globals,
         -- Generates a constant for use in GEP and extract/insertvalue
         offsetVal :: Word -> LLVM.ValueRef
         offsetVal off = LLVM.constInt LLVM.int32Type off False
-{-
-        genConstLValue :: LValue -> IO LLVM.ValueRef
+
+        getGlobalType :: Globalname -> Type
+        getGlobalType name =
+          case globals ! name of
+            Function { funcRetTy = retty, funcValTys = valtys,
+                       funcParams = params} ->
+              FuncType retty (map ((!) valtys) params)
+            GlobalVar { gvarTy = ty } -> ty
+
+        genConstLValue :: LValue -> IO (LLVM.ValueRef, Type)
         genConstLValue =
           let
-            genConstLValue' :: [Word] -> LValue -> IO LLVM.ValueRef
+            genConstLValue' :: [Word] -> LValue -> IO (LLVM.ValueRef, Type)
             genConstLValue' fields (Field (LValue lval) (Fieldname field)) =
               genConstLValue' (field : fields) lval
-            genConstLValue' fields (Field exp (Fieldname field)) =
-              do
-                exp' <- genConst exp
-                return (LLVM.constExtractElement (field : fields) exp')
+            genConstLValue' fields (Field exp fname @ (Fieldname field)) =
+              let
+                foldfun (StructType _ fields) ind =
+                  let
+                    (_, _, ty) = fields ! (Fieldname ind)
+                  in
+                    ty
+
+                indlist = field : fields
+              in do
+                (exp', ty) <- genConst exp
+                val <- LLVM.constExtractValue exp' indlist
+                return (val, foldl foldfun ty indlist)
+            genConstLValue' _ (Deref _) =
+              error "Dereference in constant initializer"
             genConstLValue' _ (Index _ _) =
               error "Index in constant initializer"
             genConstLValue' _ (Global _) =
@@ -472,32 +491,69 @@ toLLVM (Module { modName = name, modTypes = types, modGlobals = globals,
           in
             genConstLValue' []
 
-        genConstLValueAddr :: LValue -> IO LLVM.ValueRef
-        genConstLValueAddr =
+        genConstLValueAddr :: LValue -> IO (LLVM.ValueRef, Type)
+        genConstLValueAddr lval =
           let
-            genConstLValueAddr' :: [LLVM.ValueRef] -> LValue -> IO LLVM.ValueRef
+            getGEP :: [LLVM.ValueRef] -> LLVM.ValueRef -> LLVM.ValueRef
+            getGEP [] val = val
+            getGEP offsets val = LLVM.constGEP val (offsetVal 0 : offsets)
+
+            genConstLValueAddr' :: [LLVM.ValueRef] -> LValue ->
+                                   IO (LLVM.ValueRef, Type)
             genConstLValueAddr' offsets (Field (LValue lval)
-                                               (Fieldname field)) =
-              genConstLValueAddr' (offsetVal field : offsets) lval
-            genConstLValueAddr' offsets (Index (LValue lval) ind) =
+                                               fname @ (Fieldname field)) =
               do
-                ind' <- genConst ind
-                genConstLValueAddr' (ind' : offsets) lval
-            genConstLValueAddr' offsets (Index exp ind) =
-              do
-                ind' <- genConst ind
-                exp' <- genConst exp
-                return (LLVM.constGEP (ind' : offsets) exp')
-            genConstLValueAddr' [] (Global g) = return (decls ! g)
-            genConstLValueAddr' offsets (Global g) =
-              return (LLVM.constGEP (offsetVal 0 : offsets) (decls ! g))
+                (val, ty) <-
+                  genConstLValueAddr' (offsetVal field : offsets) lval
+                case ty of
+                  StructType _ fields ->
+                    let
+                      (_, _, ty) = fields ! fname
+                    in
+                      return (val, ty)
             genConstLValueAddr' _ (Field _ _) =
               error "addrof applied to non-addressable value"
+            genConstLValueAddr' offsets (Index (LValue lval) ind) =
+              do
+                (ind', _) <- genConst ind
+                (val, ty) <- genConstLValueAddr' (ind' : offsets) lval
+                case ty of
+                  ArrayType _ innerty -> return (val, innerty)
+            genConstLValueAddr' offsets (Index exp ind) =
+              do
+                (ind', _) <- genConst ind
+                (exp', ty) <- genConst exp
+                case ty of
+                  ArrayType _ innerty ->
+                    return (LLVM.constGEP exp' (ind' : offsets), innerty)
+            genConstLValueAddr' _ (Deref (LValue exp)) =
+              error "Dereference in constant initializer"
+            genConstLValueAddr' offsets (Deref exp) =
+              do
+                (exp', ty) <- genConst exp
+                case ty of
+                  PtrType (BasicObj ty) ->
+                    return (getGEP offsets exp', ty)
+                  PtrType (GCObj _ ind) ->
+                    let
+                      (tyname, _, _) = gcheaders ! ind
+                      ty = case types ! tyname of
+                        (_, Just ty) -> ty
+                        _ -> IdType tyname
+                    in
+                      return (getGEP offsets exp', ty)
+            genConstLValueAddr' offsets (Global g) =
+              let
+                ty = getGlobalType g
+                val = getGEP offsets (decls ! g)
+              in
+                return (val, ty)
             genConstLValueAddr' _ (Var _) =
               error "Variable access in constant initializer"
-          in
-            genConstLValueAddr' []
--}
+          in do
+            (val, ty) <- genConstLValueAddr' [] lval
+            return (val, PtrType (BasicObj ty))
+
         -- Generate a constant initializer for a global variable
         genConst :: Exp -> IO (LLVM.ValueRef, Type)
         genConst (Binop op l r) =
@@ -648,8 +704,7 @@ toLLVM (Module { modName = name, modTypes = types, modGlobals = globals,
               (Not, IntType _ _) -> return (LLVM.constNot inner', ty)
         genConst (AddrOf lval) = error "Complex lvalues disabled"
 --genConstLValueAddr lval
-        genConst (LValue lval) = error "Complex lvalues disabled"
---genConstLValue lval
+        genConst (LValue lval) = genConstLValue lval
         genConst (Conv toty inner) =
           do
             toty' <- toLLVMType ctx typedefs toty
@@ -1049,13 +1104,6 @@ toLLVM (Module { modName = name, modTypes = types, modGlobals = globals,
                     extract <- LLVM.buildExtractElement builder inner fields' ""
                     LLVM.buildGEP builder extract offsets ""
 -}
-                getGlobalType :: Globalname -> Type
-                getGlobalType name =
-                  case globals ! name of
-                    Function { funcRetTy = retty, funcValTys = valtys,
-                               funcParams = params} ->
-                      FuncType retty (map ((!) valtys) params)
-                    GlobalVar { gvarTy = ty } -> ty
 
                 genLValueRead :: ValMap -> LValue -> IO (LLVM.ValueRef, Type)
                 genLValueRead valmap (Var id @ (Id ind)) =
