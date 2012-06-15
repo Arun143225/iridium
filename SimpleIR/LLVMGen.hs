@@ -58,8 +58,6 @@
 --     properly.
 --   * Functions could take an additional argument list representing
 --     static linking.
---   * For type-driven compilation, have code gen functions return a
---     type as well, and make decisions based on that.
 module SimpleIR.LLVMGen(
        toLLVM
        ) where
@@ -788,6 +786,19 @@ toLLVM (Module { modName = name, modTypes = types, modGlobals = globals,
             (Id startid, Id endid) = bounds valtys
             valids = indices valtys
 
+            getGEP :: [LLVM.ValueRef] -> LLVM.ValueRef -> IO LLVM.ValueRef
+            getGEP [] val = return val
+            getGEP offsets val = LLVM.buildGEP builder val offsets ""
+
+            -- Chase down references and get a concrete type (if it
+            -- leads to an opaque type, then return the named type
+            getActualType :: Type -> Type
+            getActualType (IdType tyname) =
+              case types ! tyname of
+                (_, Just ty) -> getActualType ty
+                _ -> IdType tyname
+            getActualType ty = ty
+
             -- First, map each CFG block to an LLVM basic block
             genBlocks :: IO (UArray Node LLVM.BasicBlockRef)
             genBlocks =
@@ -1054,56 +1065,82 @@ toLLVM (Module { modName = name, modTypes = types, modGlobals = globals,
                              (fromJust (Map.lookup id valmap))
                   in
                     genLValueAccess' [] []
-
-                -- Generate read code
-                accessRead :: Map Id LLVM.ValueRef -> [Word] ->
-                              [LLVM.ValueRef] -> LLVM.ValueRef ->
-                              IO LLVM.ValueRef
-                accessRead fields [] inner =
-                  LLVM.buildExtractElement builder inner fields ""
-                accessRead [] offsets inner =
-                  do
-                    gep <- LLVM.buildGEP builder inner offsets ""
-                    LLVM.buildLoad builder gep ""
-                accessRead fields offsets inner =
-                  do
-                    extract <- LLVM.buildExtractElement builder inner fields ""
-                    gep <- LLVM.buildGEP builder extract offsets ""
-                    LLVM.buildLoad builder gep ""
-
-                -- Generate write code
-                accessWrite :: LLVM.ValueRef -> Map Id LLVM.ValueRef ->
-                               [Word] -> [LLVM.ValueRef] -> LLVM.ValueRef ->
-                               IO LLVM.ValueRef
-                accessWrite val _ [] offsets inner =
-                  do
-                    gep <- LLVM.buildGEP builder inner offsets ""
-                    LLVM.buildStore builder val gep
-                accessWrite val _ fields [] inner =
-                  error "write to aggregates not yet implemented"
-                accessWrite val _ fields offsets inner =
-                  let
-                    fields' = map offsetVal fields
-                  in do
-                    extract <- LLVM.buildExtractElement builder inner fields' ""
-                    gep <- LLVM.buildGEP builder extract offsets ""
-                    LLVM.buildStore builder val gep
-
-                -- Generate addrof code
-                accessAddr :: Map Id LLVM.ValueRef -> [Word] ->
-                              [LLVM.ValueRef] -> LLVM.ValueRef ->
-                              IO LLVM.ValueRef
-                accessAddr _ fields [] inner =
-                  error "addrof aggregate not yet implemented"
-                accessAddr _ [] offsets inner =
-                  LLVM.buildGEP builder inner offsets ""
-                accessAddr _ fields offsets inner =
-                  let
-                    fields' = map offsetVal fields
-                  in do
-                    extract <- LLVM.buildExtractElement builder inner fields' ""
-                    LLVM.buildGEP builder extract offsets ""
 -}
+                -- Generate addrof code
+                genLValueAddr :: ValMap -> LValue -> IO (LLVM.ValueRef, Type)
+                genLValueAddr valmap =
+                  let
+                    genLValueAddr' :: [LLVM.ValueRef] -> LValue ->
+                                      IO (LLVM.ValueRef, Type)
+                    genLValueAddr' [] (Deref inner) =
+                      do
+                        (inner', ty) <- genExp valmap inner
+                        case getActualType ty of
+                          PtrType _ -> return (inner', ty)
+                    genLValueAddr' offsets (Deref inner) =
+                      do
+                        (inner', ty) <- genExp valmap inner
+                        case getActualType ty of
+                          PtrType (GCObj _ _) -> 
+                            error "GCObject field addresses not implemented"
+                          PtrType (BasicObj innerty) ->
+                            do
+                              val <- LLVM.buildGEP builder inner'
+                                                   (offsetVal 0 : offsets) ""
+                              return (val, ty)
+                    genLValueAddr' offsets (Index arr ind) =
+                      do
+                        (ind', _) <- genExp valmap ind
+                        (val, ty) <-
+                          case arr of
+                            LValue lval ->
+                              genLValueAddr' (ind' : offsets) lval
+                            _ ->
+                              do
+                                (arr', ty) <- genExp valmap arr
+                                val <- LLVM.buildGEP builder arr'
+                                                     (ind' : offsets) ""
+                                return (val, ty)
+                        case getActualType ty of
+                          PtrType (GCObj _ _) -> 
+                            error "GCObject field addresses not implemented"
+                          PtrType (BasicObj arrty) ->
+                            case getActualType arrty of
+                              ArrayType _ innerty ->
+                                return (val, PtrType (BasicObj innerty))
+                          ArrayType _ innerty ->
+                            return (val, PtrType (BasicObj innerty))
+                    genLValueAddr' offsets (Field (LValue lval)
+                                                  fname @ (Fieldname field)) =
+                      do
+                        (val, ty) <- genLValueAddr' (offsetVal field : offsets)
+                                                    lval
+                        case getActualType ty of
+                          PtrType (GCObj _ _) -> 
+                            error "GCObject field addresses not implemented"
+                          PtrType (BasicObj innerty) ->
+                            case getActualType innerty of
+                              StructType _ fields ->
+                                let
+                                  (_, _, ty) = fields ! fname
+                                in
+                                  return (val, PtrType (BasicObj ty))
+                    genLValueAddr' _ (Field _ _) =
+                      error "Getting address of non-addressable value"
+                    -- XXX Global objects probably need special GC handling
+                    genLValueAddr' offsets (Global name) =
+                      return (decls ! name,
+                              PtrType (BasicObj (getGlobalType name)))
+                    genLValueAddr' offsets (Var id @ (Id ind)) =
+                      case Map.lookup ind valmap of
+                        Just (Memory volatile addr) ->
+                          do
+                            out <- getGEP offsets addr
+                            -- XXX plug the volatility into the pointer type
+                            return (out, valtys ! id)
+                        _ -> error "Getting address of non-addressable variable"
+                  in
+                    genLValueAddr' []
 
                 genLValueRead :: ValMap -> LValue -> IO (LLVM.ValueRef, Type)
                 genLValueRead valmap (Var id @ (Id ind)) =
@@ -1145,19 +1182,6 @@ toLLVM (Module { modName = name, modTypes = types, modGlobals = globals,
                     genLValueAccess (accessWrite val) valmap lval
                     return valmap
 -}
-                genLValueAddr :: ValMap -> LValue ->
-                                 IO (LLVM.ValueRef, Type)
-                genLValueAddr valmap (Var id @ (Id ind)) =
-                  case Map.lookup ind valmap of
-                    (Just (Memory _ val)) ->
-                      return (val, PtrType (BasicObj (valtys ! id)))
-                    _ -> error "Taking address of non-addressable value"
-                genLValueAddr _ (Global name) =
-                  return (decls ! name,
-                          PtrType (BasicObj (getGlobalType name)))
-                genLValueAddr valmap lval =
-                  error "complex lvalues disabled"
---                  genLValueAccess accessAddr valmap lval
 
                 -- Generate code for an expression
                 genExp :: ValMap -> Exp -> IO (LLVM.ValueRef, Type)
