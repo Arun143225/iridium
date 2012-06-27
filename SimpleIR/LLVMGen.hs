@@ -92,12 +92,6 @@ constant _ Immutable = True
 constant True _ = True
 constant _ _ = False
 
-data Location =
-    Local LLVM.ValueRef
-  | Memory !Bool LLVM.ValueRef
-  | Struct (UArray Fieldname Word)
-
-type ValMap = Map Word Location
 
 -- | Generate LLVM IR from the SimpleIR module.
 toLLVM :: Graph gr => Module gr -> IO LLVM.ModuleRef
@@ -447,10 +441,6 @@ toLLVM (Module { modName = name, modTypes = types, modGlobals = globals,
                UArray Typename LLVM.TypeRef -> IO ()
     genDefs ctx decls typedefs =
       let
-        -- Generates a constant for use in GEP and extract/insertvalue
-        offsetVal :: Word -> LLVM.ValueRef
-        offsetVal off = LLVM.constInt LLVM.int32Type off False
-
         getGlobalType :: Globalname -> Type
         getGlobalType name =
           case globals ! name of
@@ -458,6 +448,15 @@ toLLVM (Module { modName = name, modTypes = types, modGlobals = globals,
                        funcParams = params} ->
               FuncType retty (map ((!) valtys) params)
             GlobalVar { gvarTy = ty } -> ty
+
+        -- Chase down references and get a concrete type (if it
+        -- leads to an opaque type, then return the named type
+        getActualType :: Type -> Type
+        getActualType (IdType tyname) =
+          case typedefs ! tyname of
+            (_, Just ty) -> getActualType ty
+            _ -> IdType tyname
+        getActualType ty = ty
 
         genConstLValue :: LValue -> IO (LLVM.ValueRef, Type)
         genConstLValue =
@@ -700,8 +699,7 @@ toLLVM (Module { modName = name, modTypes = types, modGlobals = globals,
                   return (inner', ty)
               (Neg, FloatType _) -> return (LLVM.constFNeg inner', ty)
               (Not, IntType _ _) -> return (LLVM.constNot inner', ty)
-        genConst (AddrOf lval) = error "Complex lvalues disabled"
---genConstLValueAddr lval
+        genConst (AddrOf lval) = genConstLValueAddr lval
         genConst (LValue lval) = genConstLValue lval
         genConst (Conv toty inner) =
           do
@@ -785,19 +783,6 @@ toLLVM (Module { modName = name, modTypes = types, modGlobals = globals,
             nodelist = nodes graph
             (Id startid, Id endid) = bounds valtys
             valids = indices valtys
-
-            getGEP :: [LLVM.ValueRef] -> LLVM.ValueRef -> IO LLVM.ValueRef
-            getGEP [] val = return val
-            getGEP offsets val = LLVM.buildGEP builder val offsets ""
-
-            -- Chase down references and get a concrete type (if it
-            -- leads to an opaque type, then return the named type
-            getActualType :: Type -> Type
-            getActualType (IdType tyname) =
-              case types ! tyname of
-                (_, Just ty) -> getActualType ty
-                _ -> IdType tyname
-            getActualType ty = ty
 
             -- First, map each CFG block to an LLVM basic block
             genBlocks :: IO (UArray Node LLVM.BasicBlockRef)
@@ -1127,39 +1112,71 @@ toLLVM (Module { modName = name, modTypes = types, modGlobals = globals,
                                   return (val, PtrType (BasicObj ty))
                     genLValueAddr' _ (Field _ _) =
                       error "Getting address of non-addressable value"
-                    -- XXX Global objects probably need special GC handling
-                    genLValueAddr' offsets (Global name) =
+                    genLValueAddr' indexes (Global name) =
                       return (decls ! name,
                               PtrType (BasicObj (getGlobalType name)))
-                    genLValueAddr' offsets (Var id @ (Id ind)) =
-                      case Map.lookup ind valmap of
-                        Just (Memory volatile addr) ->
-                          do
-                            out <- getGEP offsets addr
-                            -- XXX plug the volatility into the pointer type
-                            return (out, valtys ! id)
-                        _ -> error "Getting address of non-addressable variable"
+                    -- XXX Address of local variables ought to be done
+                    -- a different way
+                    genLValueAddr' indexes (Var id) =
+                      do
+                        (out, volatile) <- genVarAddr valmap builder indexes id
+                        -- XXX plug the volatility into the pointer type
+                        return (out, PtrType (BasicObj (valtys ! id)))
                   in
                     genLValueAddr' []
 
                 genLValueRead :: ValMap -> LValue -> IO (LLVM.ValueRef, Type)
-                genLValueRead valmap (Var id @ (Id ind)) =
+                genLValueRead valmap =
                   let
-                    ty = valtys ! id
-                  in case Map.lookup ind valmap of
-                    Just (Local val) -> return (val, ty)
-                    Just (Memory volatile addr) ->
+                    genLValueRead' :: [Index] -> LValue ->
+                                      IO (LLVM.ValueRef, Type)
+                    genLValueRead' indexes (Deref inner) =
                       do
-                        val <- LLVM.buildLoad builder addr ""
-                        LLVM.setVolatile val volatile
-                        return (val, ty)
-                genLValueRead _ (Global name) =
-                  do
-                    out <- LLVM.buildLoad builder (decls ! name) ""
-                    return (out, getGlobalType name)
-                genLValueRead valmap lval =
-                  error "complex lvalues disabled"
---                  genLValueAccess accessRead valmap lval
+                        (inner', ty) <- genExp valmap inner
+                        case getActualType ty of
+                          -- XXX For GC objects, create a table and look up accessor functions
+                          PtrType (GCObj _ _) ->
+                            error "Reading GC object fields not implemented"
+                          PtrType (BasicObj innerty) ->
+                            do
+                              addr <- genGEP builder inner' indexes
+                              out <- LLVM.buildLoad builder addr ""
+                              return (out, innerty)
+                    genLValueRead' offsets (Index (LValue lval) ind) =
+                      do
+                        (ind', _) <- genExp valmap ind
+                        (out, ty) <- genLValueRead' (ValueInd ind : indexes) lval
+                        case getActualType ty of
+                          ArrayType _ innerty -> return (out, innerty)
+                    genLValueRead' offsets (Field exp field) =
+                      do
+                        (ind', _) <- genExp valmap ind
+                        (out, ty) <-
+                          case exp of
+                            LValue lval -> genLValueRead' (FieldInd field : indexes) lval
+                            _ ->
+                              do
+                                (exp', ty) <- genExp valmap exp
+                                
+                        case getActualType ty of
+                          StructType _ fields ->
+                            let
+                              (_, _, fieldty) = fields ! field
+                            in
+                              return (out, fieldty)
+                    genLValueRead' indexes (Global name) =
+                      do
+                        addr <- getGEP builder (decls ! name)
+                                       (map getOffsetValue indexes)
+                        val <- LLVM.buildLoad builder val ""
+                        -- XXX set volatile
+                        return (val, getGlobalType name)
+                    genLValueRead' indexes (Var id) =
+                      do
+                        val <- genVarRead valmap builder indexes id
+                        return (val, valtys ! id)
+                  in
+                    genLValueRead' []
 
                 genLValueWrite :: ValMap -> LLVM.ValueRef -> LValue -> IO ValMap
                 genLValueWrite valmap val (Var (Id id)) =

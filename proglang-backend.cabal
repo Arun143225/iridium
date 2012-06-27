@@ -19,4 +19,6 @@ Cabal-version:       >= 1.9.2
 Library
   build-depends:        base, mtl, data-hash, pretty, fgl, array,
                         bitarray, proglang-util, llvm-bindings, containers
-  exposed-modules:      SimpleIR, SimpleIR.LLVMGen
+  exposed-modules:      SimpleIR
+--, SimpleIR.LLVMGen
+  other-modules:	SimpleIR.LLVMGen.LLVMValue, SimpleIR.LLVMGen.VarAccess

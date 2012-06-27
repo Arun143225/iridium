@@ -31,6 +31,8 @@ module SimpleIR.LLVMGen.LLVMValue(
        LLVMValue(..)
        ) where
 
+import SimpleIR
+
 import qualified LLVM.Core as LLVM
 
 -- | This class represents things that can be directly and easily

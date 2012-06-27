@@ -47,11 +47,21 @@ module SimpleIR.LLVMGen.VarAccess(
        genVarWrite
        ) where
 
+import Data.Array(Array)
+import Data.Array.IArray
+import Data.Array.Unboxed(UArray)
+import Data.Foldable
+import Data.Map(Map)
 import Data.Maybe
+import Data.Traversable
+import Data.Word
+import SimpleIR
 import SimpleIR.LLVMGen.LLVMValue
 
+import Prelude hiding (mapM_, mapM, foldr, foldl, sequence)
+
 import qualified Data.Map as Map
-import qualified LLVM.Core as Core
+import qualified LLVM.Core as LLVM
 
 -- | Locations are stored in ValMaps to indicate how a given variable
 -- is represented.
@@ -79,7 +89,7 @@ data Access =
   -- | An LLVM value
     DirectAcc !LLVM.ValueRef
   -- | Equivalent to a structure constant.
-  | StructAcc (UArray Fieldname Word)
+  | StructAcc (Array Fieldname Access)
 
 -- | A map from Ids to locations, representing the state of the
 -- program.
@@ -87,28 +97,28 @@ type ValMap = Map Word Location
 
 -- | Generate a getelementptr instruction from the necessary information
 genGEP :: LLVM.BuilderRef -> LLVM.ValueRef -> [Index] -> IO LLVM.ValueRef
-genGEP builder val [] = val
+genGEP builder val [] = return val
 genGEP builder val indexes = LLVM.buildGEP builder val (map toValue indexes) ""
 
 -- | Generate an extractvalue instruction from the necessary information
 genExtractValue :: LLVM.BuilderRef -> LLVM.ValueRef -> [Index] ->
                    IO LLVM.ValueRef
 genExtractValue builder val [] = return val
-genExtractValue builder val (FieldInd index : indexes) =
+genExtractValue builder val (FieldInd (Fieldname fname) : indexes) =
   do
-    inner <- getExtractValue indexes val
-    val <- LLVM.buildExtractValue builder inner index ""
+    inner <- genExtractValue builder val indexes
+    LLVM.buildExtractValue builder inner fname ""
 
 -- | Lookup a variable in a value map and return its location
 getVarLocation :: ValMap -> Id -> Location
 getVarLocation valmap (Id ind) =
-  fromJust (Map.lookup valmap ind)
+  fromJust (Map.lookup ind valmap)
 
 -- | Get the address of a variable, as well as whether or not it is 
 genVarAddr :: LLVM.BuilderRef -> ValMap -> [Index] -> Id ->
               IO (LLVM.ValueRef, Bool)
-genVarAddr valmap builder indexes (Id ind) =
-  case getVarLocation valmap of
+genVarAddr builder valmap indexes id =
+  case getVarLocation valmap id of
     MemLoc volatile addr ->
       do
         out <- genGEP builder addr indexes
@@ -122,14 +132,14 @@ genVarRead builder valmap indexes id =
     -- build a direct access.
     BindLoc val ->
       do
-        out <- genExtractValue indexes val
+        out <- genExtractValue builder val indexes
         return (DirectAcc out)
     -- For a memory location, generate a GEP, then load, then build a
     -- direct access.
-    MemLoc volatile addr ->
+    MemLoc volatile mem ->
       do
-        offaddr <- genGEP builder addr (map getOffsetValue offsets)
-        val <- LLVM.buildLoad builder val ""
+        addr <- genGEP builder mem indexes
+        val <- LLVM.buildLoad builder addr ""
         LLVM.setVolatile val volatile
         return (DirectAcc val)
     -- For structures, we'll either recurse, or else build a structure
@@ -138,63 +148,82 @@ genVarRead builder valmap indexes id =
       case indexes of
         -- If there's indexes, recurse
         (FieldInd ind : indexes) ->
-          genVarRead builder indexes (fields ! ind)
+          genVarRead builder valmap indexes (Id (fields ! ind))
         -- Otherwise, build a structure access
         [] ->
           do
-            accs <- mapM (genVarRead builder valmap []) fields
-            return (StructAcc accs)
+            accs <- mapM (genVarRead builder valmap []) (map Id (elems fields))
+            return (StructAcc (listArray (bounds fields) accs))
 
--- | Given an access and a variable, do the work to write to it.  This
--- can involve a number of cases.
+-- | Take an access, a variable and indexes, and do the work to write
+-- to the variable.  This involves many possible cases.
 genVarWrite :: LLVM.BuilderRef -> ValMap -> Access -> [Index] -> Id ->
                IO ValMap
-genVarWrite builder valmap acc indexes id =
-  case (acc, getVarLocation id, indexes) of
-    -- Straightforward, we've got a value and a binding, so update
-    -- the map.
-    (BindLoc _, []) -> return (Map.insert id (toValue acc) valmap)
-    -- This case should never happen.
-    (BindLoc _, _) -> error "Extra indexes in assignment to variable"
-    -- We've got a value and a memory location.  Generate a GEP and store
-    -- the value.
-    (MemLoc volatile mem, indexes) ->
-      do
-        addr <- genGEP builder addr indexes
-        store <- LLVM.buildStore builder (toValue acc) addr
-        LLVM.setVolatile store volatile
-        return valmap
-    -- If we actuall have fields, descend one index into the
-    -- destination and recurse.
-    (StructLoc fields, FieldInd field : rest) ->
-      genVarWrite valmap builder acc (fields ! field) rest
-    -- Any other kind of index is an error condition.
-    (StructLoc _, _ : _) ->
-      error "Bad indexes in assignment to variable"
-    -- When we run out of fields, we've reached an end case, and we
-    -- need to look at the access.
-    (StructLoc fields, []) ->
-      case acc of
-        -- We've got a value (which ought to have a structure type),
-        -- and a local variable that's a structure.  Go through and
-        -- generate writes into each field.
-        DirectAcc val ->
-          let
-            foldfun valmap (field, id) =
-              do
-                val' <- LLVM.buildExtractValue builder val field ""
-                genVarWrite valmap builder (DirectAcc val') id []
-          in
-            foldlM foldfun valmap (assocs fields)
-        -- We've got a structure access and a structure location,
-        -- which should match up.  Pair up the fields and recurse on
-        -- each pair individually.
-        StructAcc accfields ->
-          let
-            foldfun 
-            fieldlist = zip (elems accfields) (elems fields)
-          in
-            foldlM foldfun valmap fieldlist
+genVarWrite builder =
+  let
+    -- This is an inner function which processes the no-index cases
+    varWrite :: ValMap -> Access -> Id -> IO ValMap
+    varWrite valmap acc id @ (Id ind) =
+      case getVarLocation valmap id of
+        -- Straightforward, we've got a value and a binding, so update
+        -- the map.
+        BindLoc _ -> return (Map.insert ind (BindLoc (toValue acc)) valmap)
+        -- We've got a value and a memory location.  Generate a store.
+        MemLoc volatile addr ->
+          do
+            store <- LLVM.buildStore builder (toValue acc) addr
+            LLVM.setVolatile store volatile
+            return valmap
+        -- For structures, we end up recursing.
+        StructLoc fields ->
+          case acc of
+            -- We've got a value (which ought to have a structure type),
+            -- and a local variable that's a structure.  Go through and
+            -- generate writes into each field.
+            DirectAcc val ->
+              let
+                foldfun valmap (Fieldname fname, id) =
+                  do
+                    val' <- LLVM.buildExtractValue builder val fname ""
+                    varWrite valmap (DirectAcc val') (Id id)
+              in
+                foldlM foldfun valmap (assocs fields)
+            -- We've got a structure access and a structure location,
+            -- which should match up.  Pair up the fields and recurse on
+            -- each pair individually.
+            StructAcc accfields ->
+              let
+                foldfun valmap (acc, id) = varWrite valmap acc (Id id)
+                fieldlist = zip (elems accfields) (elems fields)
+              in
+                foldlM foldfun valmap fieldlist
+
+    -- This is the actual top-level implementation
+    genVarWrite' :: ValMap -> Access -> [Index] -> Id -> IO ValMap
+    genVarWrite' valmap acc [] id = varWrite valmap acc id
+    genVarWrite' valmap acc indexes id =
+      case getVarLocation valmap id of
+        -- This case should never happen.
+        BindLoc _ -> error "Extra indexes in assignment to variable"
+        -- We've got a value and a memory location.  Generate a GEP and store
+        -- the value.
+        MemLoc volatile mem ->
+          do
+            addr <- LLVM.buildGEP builder mem (map toValue indexes) ""
+            store <- LLVM.buildStore builder (toValue acc) addr
+            LLVM.setVolatile store volatile
+            return valmap
+        -- For structures, we recurse to strip away the fields
+        StructLoc fields ->
+          case indexes of
+            -- If we actually have fields, descend one index into the
+            -- destination and recurse.
+            FieldInd field : rest ->
+              genVarWrite' valmap acc rest (Id (fields ! field))
+            -- Any other kind of index is an error condition.
+            _ -> error "Bad indexes in assignment to variable"
+  in
+    genVarWrite'
 
 instance LLVMValue Index where
   toValue (FieldInd fname) = toValue fname
@@ -202,4 +231,4 @@ instance LLVMValue Index where
 
 instance LLVMValue Access where
   toValue (DirectAcc val) = val
-  toValue (StructAcc arr) = LLVM.constStruct (elems arr) False
+  toValue (StructAcc arr) = LLVM.constStruct (map toValue (elems arr)) False
