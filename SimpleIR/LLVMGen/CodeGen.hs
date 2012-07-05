@@ -35,7 +35,7 @@ module SimpleIR.LLVMGen.CodeGen(
 import Data.Array(Array)
 import Data.Array.IArray
 import Data.Array.Unboxed(UArray)
-import Data.Graph.Inductive
+import Data.Graph.Inductive.Graph
 import Data.Traversable
 import Prelude hiding (mapM)
 import SimpleIR
@@ -469,8 +469,9 @@ genExp mod ctx builder decls valtys typedefs valmap =
 
 -- | Generate code for a statement
 genStm :: Graph gr => Module gr -> LLVM.ContextRef -> LLVM.BuilderRef ->
-          Array Globalname LLVM.ValueRef -> Array Id Type ->
-          UArray Typename LLVM.TypeRef -> ValMap -> Stm -> IO ValMap
+                      Array Globalname LLVM.ValueRef -> Array Id Type ->
+                      UArray Typename LLVM.TypeRef -> ValMap -> Stm ->
+                      IO ValMap
 genStm mod ctx builder decls valtys typedefs valmap stm =
   let
     genExp' = genExp mod ctx builder decls valtys typedefs valmap
