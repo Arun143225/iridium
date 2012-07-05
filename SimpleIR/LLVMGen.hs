@@ -82,11 +82,6 @@ import qualified LLVM.BitWriter as LLVM
 import qualified LLVM.Core as LLVM
 import qualified SimpleIR.LLVMGen.ConstValue as ConstValue
 
-constant :: Bool -> Mutability -> Bool
-constant _ Immutable = True
-constant True _ = True
-constant _ _ = False
-
 -- | Generate LLVM IR from the SimpleIR module.
 toLLVM :: Graph gr => Module gr -> IO LLVM.ModuleRef
 toLLVM mod @ (Module { modName = name, modTypes = types, modGlobals = globals,
@@ -196,60 +191,6 @@ toLLVM mod @ (Module { modName = name, modTypes = types, modGlobals = globals,
       do
         llvmty <- toLLVMType ctx typedefs ty
         LLVM.addGlobal mod llvmty name
-
-    -- Generate the accessors and modifiers for the given type
-    genAccModDecls :: LLVM.ModuleRef -> LLVM.ContextRef ->
-                      UArray Typename LLVM.TypeRef -> IO ()
-    genAccModDecls mod ctx typedefs =
-      let
-        genAccMods :: (Typename, (String, Maybe Type)) -> IO ()
-        genAccMods (typename, (str, Just ty)) =
-          let
-            tyref = (typedefs ! typename)
-
-            genDecls :: Bool -> Type -> String -> [LLVM.TypeRef] -> IO ()
-            genDecls const ty name args =
-              let
-                readtype :: LLVM.TypeRef -> LLVM.TypeRef
-                readtype resty = LLVM.functionType resty (reverse args) False
-
-                writetype :: LLVM.TypeRef -> LLVM.TypeRef
-                writetype resty =
-                  LLVM.functionType LLVM.voidType (reverse (resty : args)) False
-              in do
-                resty <- toLLVMType ctx typedefs ty
-                readfunc <- LLVM.addFunction mod (name ++ ".read")
-                                                 (readtype resty)
-                LLVM.addFunctionAttr readfunc LLVM.NoUnwindAttribute
-                LLVM.addFunctionAttr readfunc LLVM.ReadOnlyAttribute
-                LLVM.addFunctionAttr readfunc LLVM.AlwaysInlineAttribute
-                if not const
-                  then do
-                    writefunc <- LLVM.addFunction mod (name ++ ".write")
-                                                      (writetype resty)
-                    LLVM.addFunctionAttr writefunc LLVM.NoUnwindAttribute
-                    LLVM.addFunctionAttr writefunc LLVM.AlwaysInlineAttribute
-                    return()
-                  else return ()
-
-            genAccMods' :: String -> Bool -> [LLVM.TypeRef] ->
-                           (String, Mutability, Type) -> IO ()
-            genAccMods' prefix const args (name, mut, StructType _ fields) =
-              do
-                mapM_ (genAccMods' (prefix ++ "." ++ name)
-                                   (constant const mut) args) fields
-            genAccMods' prefix const args (name, mut, ArrayType _ inner) =
-              do
-                genAccMods' prefix const (LLVM.int32Type : args)
-                                         (name, mut, inner)
-            genAccMods' prefix const args (name, mut, ty) =
-              genDecls (constant const mut) ty (prefix ++ "." ++ name) args
-          in do
-            genAccMods' "core.types" False [tyref] (str, Mutable, ty)
-            return ()
-        genAccMods _ = return ()
-      in
-        mapM_ genAccMods (assocs types)
 
     -- Actually generate the definitions for all globals
     genDefs :: LLVM.ContextRef -> Array Globalname LLVM.ValueRef ->
@@ -525,6 +466,6 @@ toLLVM mod @ (Module { modName = name, modTypes = types, modGlobals = globals,
     gcheaderdecls <- gcHeaders mod ctx typedefs
     genMetadata mod ctx
     decls <- mapM (genDecl mod ctx typedefs) globals
-    genAccModDecls mod ctx typedefs
+    genAccessors mod ctx typedefs
     genDefs ctx decls typedefs
     return mod
