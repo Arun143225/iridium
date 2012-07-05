@@ -30,8 +30,7 @@
 module SimpleIR.LLVMGen.Utils(
        booltype,
        getGlobalType,
-       getActualType,
-       toLLVMType
+       getActualType
        ) where
 
 import Data.Array(Array)
@@ -64,43 +63,3 @@ getActualType mod @ (Module { modTypes = types }) (IdType tyname) =
     (_, Just ty) -> getActualType mod ty
     _ -> IdType tyname
 getActualType _ ty = ty
-
--- | Generate the LLVM type for a given Simple IR type.
-toLLVMType :: Graph gr => Module gr -> LLVM.ContextRef ->
-              UArray Typename LLVM.TypeRef -> Type -> IO LLVM.TypeRef
-toLLVMType (Module { modGCHeaders = gcheaders }) ctx types =
-  let
-    toLLVMType' :: Type -> IO LLVM.TypeRef
-    toLLVMType' (StructType packed fields) =
-      do
-        fieldtys <- mapM (\(_, _, ty) -> toLLVMType' ty) (elems fields)
-        LLVM.structTypeInContext ctx fieldtys packed
-    toLLVMType' (ArrayType (Just size) inner) =
-      do
-        inner <- toLLVMType' inner
-        return (LLVM.arrayType inner size)
-    toLLVMType' (ArrayType Nothing inner) =
-      do
-        inner <- toLLVMType' inner
-        return (LLVM.arrayType inner 0)
-    toLLVMType' (PtrType (BasicObj inner)) =
-       do
-        inner <- toLLVMType' inner
-        return (LLVM.pointerType inner 0)
-    toLLVMType' (PtrType (GCObj _ id)) =
-      let
-        (tname, _, _) = gcheaders ! id
-      in
-        return (LLVM.pointerType (types ! tname) 0)
-    toLLVMType' (IdType id) = return (types ! id)
-    toLLVMType' (IntType _ 1) = LLVM.int1TypeInContext ctx
-    toLLVMType' (IntType _ 8) = LLVM.int8TypeInContext ctx
-    toLLVMType' (IntType _ 16) = LLVM.int16TypeInContext ctx
-    toLLVMType' (IntType _ 32) = LLVM.int32TypeInContext ctx
-    toLLVMType' (IntType _ 64) = LLVM.int64TypeInContext ctx
-    toLLVMType' (IntType _ size) = LLVM.intTypeInContext ctx size
-    toLLVMType' (FloatType 32) = LLVM.floatTypeInContext ctx
-    toLLVMType' (FloatType 64) = LLVM.doubleTypeInContext ctx
-    toLLVMType' (FloatType 128) = LLVM.fp128TypeInContext ctx
-  in
-    toLLVMType'

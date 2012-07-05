@@ -78,7 +78,6 @@ import Prelude hiding (mapM_, mapM, foldr, foldl, sequence)
 import SimpleIR
 
 import qualified Data.Map as Map
-import qualified LLVM.BitWriter as LLVM
 import qualified LLVM.Core as LLVM
 import qualified SimpleIR.LLVMGen.ConstValue as ConstValue
 
@@ -87,94 +86,6 @@ toLLVM :: Graph gr => Module gr -> IO LLVM.ModuleRef
 toLLVM mod @ (Module { modName = name, modTypes = types, modGlobals = globals,
                        modGCHeaders = gcheaders, modGenGCs = gengcs }) =
   let
-    -- First thing: run through all the named types, and generate
-    -- LLVM.TypeRefs for all of them
-    genTypeDefs :: LLVM.ContextRef -> IO (UArray Typename LLVM.TypeRef)
-    genTypeDefs ctx =
-      let
-        -- Fill in the array of types
-        initTypeArray :: IOUArray Typename LLVM.TypeRef -> IO ()
-        initTypeArray typemap =
-          let
-            -- Translate a SimpleIR type into an LLVM type.  We need
-            -- the map from typenames to (uninitialized) LLVM types to
-            -- do this.
-            genLLVMType :: Type -> IO LLVM.TypeRef
-            genLLVMType (StructType packed fields) =
-              do
-                fieldtys <- mapM (\(_, _, ty) -> genLLVMType ty) (elems fields)
-                LLVM.structTypeInContext ctx fieldtys packed
-            genLLVMType (ArrayType (Just size) inner) =
-              do
-                inner <- genLLVMType inner
-                return (LLVM.arrayType inner size)
-            genLLVMType (ArrayType Nothing inner) =
-              do
-                inner <- genLLVMType inner
-                return (LLVM.arrayType inner 0)
-            genLLVMType (PtrType (BasicObj inner)) =
-              do
-                inner <- genLLVMType inner
-                return (LLVM.pointerType inner 0)
-            genLLVMType (PtrType (GCObj _ id)) =
-              let
-                (tname, _, _) = gcheaders ! id
-              in do
-                innerty <- updateEntry tname
-                return (LLVM.pointerType innerty 0)
-            genLLVMType (IdType id) = updateEntry id
-            genLLVMType (IntType _ 1) = LLVM.int1TypeInContext ctx
-            genLLVMType (IntType _ 8) = LLVM.int8TypeInContext ctx
-            genLLVMType (IntType _ 16) = LLVM.int16TypeInContext ctx
-            genLLVMType (IntType _ 32) = LLVM.int32TypeInContext ctx
-            genLLVMType (IntType _ 64) = LLVM.int64TypeInContext ctx
-            genLLVMType (IntType _ size) = LLVM.intTypeInContext ctx size
-            genLLVMType (FloatType 32) = LLVM.floatTypeInContext ctx
-            genLLVMType (FloatType 64) = LLVM.doubleTypeInContext ctx
-            genLLVMType (FloatType 128) = LLVM.fp128TypeInContext ctx
-
-            -- Grab the type entry for this type name, possibly
-            -- (re)initializing it
-            updateEntry :: Typename -> IO LLVM.TypeRef
-            updateEntry ind =
-              case types ! ind of
-                (_, Just ty @ (StructType packed fields)) ->
-                  do
-                    ent <- readArray typemap ind
-                    if LLVM.isOpaqueStruct ent
-                      then do
-                        fieldtys <- mapM (\(_, _, ty) -> genLLVMType ty)
-                                         (elems fields)
-                        LLVM.structSetBody ent fieldtys packed
-                        return ent
-                      else return ent
-                (_, Just ty) ->
-                  do
-                    ent <- readArray typemap ind
-                    if ent == nullPtr
-                      then do
-                        newty <- genLLVMType ty
-                        writeArray typemap ind newty
-                        return ent
-                      else return ent
-                _ -> readArray typemap ind
-          in
-            mapM_ (\ind -> updateEntry ind >> return ()) (indices types)
-
-        -- Initialize structures and opaques to empty named structures and
-        -- everything else to null pointers.
-        initEntry :: (String, Maybe Type) -> IO LLVM.TypeRef
-        initEntry (str, Nothing) =
-          LLVM.structCreateNamed ctx str
-        initEntry (str, Just (StructType _ _)) =
-          LLVM.structCreateNamed ctx str
-        initEntry _ = return nullPtr
-      in do
-        elems <- mapM initEntry (elems types)
-        typearr <- newListArray (bounds types) elems
-        initTypeArray typearr
-        unsafeFreeze typearr
-
     -- Run over all the global values, and generate declarations for
     -- them all.
     genDecl :: Graph gr => LLVM.ModuleRef -> LLVM.ContextRef ->

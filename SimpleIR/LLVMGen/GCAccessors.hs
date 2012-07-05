@@ -40,7 +40,7 @@ import Prelude hiding (mapM_)
 import SimpleIR
 
 import qualified LLVM.Core as LLVM
-import qualified SimpleIR.LLVMGen.Utils as Utils
+import qualified SimpleIR.LLVMGen.Types as Types
 
 constant :: Bool -> Mutability -> Bool
 constant _ Immutable = True
@@ -52,7 +52,7 @@ genAccessors :: Graph gr => Module gr -> LLVM.ModuleRef -> LLVM.ContextRef ->
                             UArray Typename LLVM.TypeRef -> IO ()
 genAccessors m @ (Module { modTypes = types }) mod ctx typedefs =
   let
-    toLLVMType = Utils.toLLVMType m ctx typedefs
+    toLLVMType = Types.toLLVMType m ctx typedefs
 
     genTypeAccessors :: (Typename, (String, Maybe Type)) -> IO ()
     genTypeAccessors (typename, (str, Just ty)) =

@@ -43,6 +43,7 @@ import SimpleIR.LLVMGen.LLVMValue
 import SimpleIR.LLVMGen.VarAccess(Index(..), Access(..), Location(..), ValMap)
 
 import qualified LLVM.Core as LLVM
+import qualified SimpleIR.LLVMGen.Types as Types
 import qualified SimpleIR.LLVMGen.Utils as Utils
 import qualified SimpleIR.LLVMGen.VarAccess as VarAccess
 
@@ -59,7 +60,7 @@ genExp mod ctx builder decls valtys typedefs valmap =
     getActualType = Utils.getActualType mod
     booltype = Utils.booltype
     getGlobalType = Utils.getGlobalType mod
-    toLLVMType = Utils.toLLVMType mod ctx typedefs
+    toLLVMType = Types.toLLVMType mod ctx typedefs
     genVarAddr = VarAccess.genVarAddr builder valmap
     genGEP = VarAccess.genGEP builder
     genExtractValue = VarAccess.genExtractValue builder

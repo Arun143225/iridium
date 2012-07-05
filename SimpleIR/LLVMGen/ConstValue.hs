@@ -39,6 +39,7 @@ import SimpleIR
 import SimpleIR.LLVMGen.LLVMValue
 
 import qualified LLVM.Core as LLVM
+import qualified SimpleIR.LLVMGen.Types as Types
 import qualified SimpleIR.LLVMGen.Utils as Utils
 
 -- | Generate an LLVM value representing an initializer for a global
@@ -50,8 +51,8 @@ genConst mod @ (Module { modTypes = types, modGCHeaders = gcheaders })
          ctx typedefs decls =
   let
     getGlobalType = Utils.getGlobalType mod
-    toLLVMType = Utils.toLLVMType mod ctx typedefs
     booltype = Utils.booltype
+    toLLVMType = Types.toLLVMType mod ctx typedefs
 
     -- Generate a constant value from an LValue.  The only allowable
     -- cases are for fields and array indexes.
