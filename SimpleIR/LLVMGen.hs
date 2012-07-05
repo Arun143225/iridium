@@ -180,36 +180,6 @@ toLLVM mod @ (Module { modName = name, modTypes = types, modGlobals = globals,
         initTypeArray typearr
         unsafeFreeze typearr
 
-    -- Generate an array mapping GCHeaders to llvm globals
-    gcHeaders :: LLVM.ModuleRef -> LLVM.ContextRef ->
-                 UArray Typename LLVM.TypeRef ->
-                 IO (Array GCHeader LLVM.ValueRef)
-    gcHeaders mod ctx typemap =
-      let
-        mobilityStr Mobile = "mobile"
-        mobilityStr Immobile = "immobile"
-
-        mutabilityStr Immutable = "const"
-        mutabilityStr WriteOnce = "writeonce"
-        mutabilityStr Mutable = "mutable"
-        mutabilityStr (Custom str) = str
-
-        mapfun :: LLVM.TypeRef -> (Typename, Mobility, Mutability) ->
-                  IO LLVM.ValueRef
-        mapfun hdrty (tname, mob, mut) =
-          let
-            (str, _) = types ! tname
-            name = "core.gc.typedesc." ++ str ++ "." ++
-              mobilityStr mob ++ "." ++ mutabilityStr mut
-          in do
-            val <- LLVM.addGlobal mod hdrty name
-            LLVM.setGlobalConstant val True
-            LLVM.setLinkage val LLVM.LinkerPrivateLinkage
-            return val
-      in do
-        hdrty <- LLVM.structCreateNamed ctx "core.gc.typedesc"
-        mapM (mapfun hdrty) gcheaders
-
     -- Run over all the global values, and generate declarations for
     -- them all.
     genDecl :: Graph gr => LLVM.ModuleRef -> LLVM.ContextRef ->

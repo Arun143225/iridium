@@ -23,5 +23,6 @@ Library
 --, SimpleIR.LLVMGen
   other-modules:	SimpleIR.LLVMGen.LLVMValue, SimpleIR.LLVMGen.VarAccess,
                         SimpleIR.LLVMGen.Utils, SimpleIR.LLVMGen.ConstValue,
-                        SimpleIR.LLVMGen.CodeGen, SimpleIR.LLVMGen.Metadata
+                        SimpleIR.LLVMGen.CodeGen, SimpleIR.LLVMGen.Metadata,
+                        SimpleIR.LLVMGen.GCHeaders
 
