@@ -31,6 +31,7 @@ module SimpleIR.LLVMGen.LLVMValue(
        LLVMValue(..)
        ) where
 
+import Data.Word
 import SimpleIR
 
 import qualified LLVM.Core as LLVM
