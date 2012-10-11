@@ -95,6 +95,7 @@ genDefs mod @ (Module { modGlobals = globals }) ctx decls typedefs =
       do
         (init, _) <- genConst exp
         LLVM.setInitializer (decls ! gname) init
+    addDef _ (gname, GlobalVar { gvarName = name, gvarInit = Nothing }) = return ()
     addDef builder (name, Function { funcBody = Just (Body (Label entry) graph),
                                      funcValTys = valtys,
                                      funcParams = params }) =
