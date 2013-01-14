@@ -1,5 +1,5 @@
 Name:                proglang-backend
-Version:             0.0.0.0
+Version:             0.1.0.0
 Synopsis:            Intermediate representations and facilities for
                      compiling programming languages
 Description:
@@ -8,7 +8,7 @@ Description:
   programming languages down to LLVM.
 
   This package is a work in progress.
-License:             BSD3
+License:             GPL
 Author:              Eric McCorkle
 Maintainer:          eric@shadowsun.net
 Stability:           Pre-alpha
@@ -19,10 +19,15 @@ Cabal-version:       >= 1.9.2
 Library
   build-depends:        base, mtl, data-hash, pretty, fgl, array,
                         bitarray, proglang-util, llvm-bindings, containers
-  exposed-modules:      SimpleIR, SimpleIR.LLVMGen
-  other-modules:	SimpleIR.LLVMGen.LLVMValue, SimpleIR.LLVMGen.VarAccess,
-                        SimpleIR.LLVMGen.Utils, SimpleIR.LLVMGen.ConstValue,
-                        SimpleIR.LLVMGen.CodeGen, SimpleIR.LLVMGen.Metadata,
-                        SimpleIR.LLVMGen.GCHeaders, SimpleIR.LLVMGen.GCAccessors,
-                        SimpleIR.LLVMGen.Types, SimpleIR.LLVMGen.Globals
+  other-modules:        IR.FlatIR.Syntax,
+                        IR.FlatIR.LLVMGen.Types,
+                        IR.FlatIR.LLVMGen.Utils,
+                        IR.FlatIR.LLVMGen.LLVMValue,
+                        IR.GC.Types
+--  exposed-modules:      SimpleIR, SimpleIR.LLVMGen
+--  other-modules:	SimpleIR.LLVMGen.LLVMValue, SimpleIR.LLVMGen.VarAccess,
+--                        SimpleIR.LLVMGen.Utils, SimpleIR.LLVMGen.ConstValue,
+--                        SimpleIR.LLVMGen.CodeGen, SimpleIR.LLVMGen.Metadata,
+--                        SimpleIR.LLVMGen.GCHeaders, SimpleIR.LLVMGen.GCAccessors,
+--                        SimpleIR.LLVMGen.Types, SimpleIR.LLVMGen.Globals
 
