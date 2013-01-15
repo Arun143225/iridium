@@ -70,7 +70,7 @@ data Index =
   -- structure types and locations.
     FieldInd !Fieldname
   -- | A value.  These should only exist when indexing into an array.
-  | ValueInd LLVM.ValueRef
+  | ValueInd !LLVM.ValueRef
 
 -- | Accesses represent a slightly more complex value type.  These are
 -- essentiall the dual of Locations, and are paired up with them in
