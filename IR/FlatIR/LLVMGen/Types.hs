@@ -33,7 +33,6 @@ import Foreign.Ptr
 import IR.FlatIR.Syntax
 import Prelude hiding (mapM_, mapM, foldr, foldl, sequence)
 
-import qualified IR.Common.GC as GC
 import qualified LLVM.Core as LLVM
 
 -- | Generate an array mapping typenames to LLVM types.
@@ -75,11 +74,11 @@ genTypeDefs (Module { modTypes = types, modGCHeaders = gcheaders }) ctx =
           do
             inner' <- genLLVMType inner
             return (LLVM.arrayType inner' (0 :: Word))
-        genLLVMType (PtrType { ptrElemTy = GC.Native inner }) =
+        genLLVMType (PtrType { ptrTy = Native { nativeTy = inner } }) =
           do
             inner' <- genLLVMType inner
             return (LLVM.pointerType inner' (0 :: Word))
-        genLLVMType (PtrType { ptrElemTy = GC.GC _ gcid }) =
+        genLLVMType (PtrType { ptrTy = GC { gcTy = gcid } }) =
           let
             (tname, _, _) = gcheaders ! gcid
           in do
@@ -184,11 +183,11 @@ toLLVMType (Module { modGCHeaders = gcheaders }) ctx types =
       do
         inner' <- toLLVMType' inner
         return (LLVM.arrayType inner' (0 :: Word))
-    toLLVMType' (PtrType { ptrElemTy = GC.Native inner }) =
+    toLLVMType' (PtrType { ptrTy = Native { nativeTy = inner } }) =
        do
         inner' <- toLLVMType' inner
         return (LLVM.pointerType inner' (0 :: Word))
-    toLLVMType' (PtrType { ptrElemTy = GC.GC _ gcid }) =
+    toLLVMType' (PtrType { ptrTy = GC { gcTy = gcid } }) =
       let
         (tname, _, _) = gcheaders ! gcid
       in

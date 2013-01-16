@@ -49,6 +49,10 @@ module IR.FlatIR.Syntax(
 
        -- ** Types
        Type(..),
+       Ptr(..),
+       Mutability(..),
+       Mobility(..),
+       PtrClass(..),
 
        -- ** Execution
        Exp(..),
@@ -70,12 +74,11 @@ import Data.Hash
 import Data.Maybe
 import Data.Pos
 import Data.Word
-import IR.Common.Operators
+import IR.Common.Ptr
+import IR.Common.Operator
 import Prelude hiding (head)
 --import Prelude.Extras(Eq1, Ord1)
 --import Text.Format
-
-import qualified IR.Common.GC as GC
 
 -- FlatIR is a simply-typed IR intended to be close to LLVM, but not
 -- in SSA form.  It is intended primarily as a jumping-off point for
@@ -113,7 +116,7 @@ data Type =
       -- | Whether or not the layout is strict.
       structPacked :: !Bool,
       -- | The fields of the struct.
-      structFields :: Array Fieldname (String, GC.Mutability, Type),
+      structFields :: Array Fieldname (String, Mutability, Type),
       -- | The position in source from which this arises.
       structPos :: !Pos
     }
@@ -128,8 +131,8 @@ data Type =
     }
   -- | Pointers, both native and GC
   | PtrType {
-      -- | The pointed-to type.
-      ptrElemTy :: !(GC.Type GCHeader Type),
+      -- | The pointer information
+      ptrTy :: !(Ptr GCHeader Type),
       -- | The position in source from which this arises.
       ptrPos :: !Pos
     }
@@ -432,7 +435,7 @@ data Module gr =
       -- definitions
       modTypes :: Array Typename (String, Maybe Type),
       -- | A map from GCHeaders to their definitions
-      modGCHeaders :: Array GCHeader (Typename, GC.Mobility, GC.Mutability),
+      modGCHeaders :: Array GCHeader (Typename, Mobility, Mutability),
       -- | Generated GC types (this module will generate the signatures
       -- and accessors)
       modGenGCs :: [GCHeader],
@@ -508,7 +511,7 @@ instance Hashable Type where
     hashInt 2 `combine` hashInt 0 `combine` hash inner
   hash (ArrayType { arrayLen = Just size, arrayElemTy = inner }) =
     hashInt 2 `combine` hash size `combine` hash inner
-  hash (PtrType { ptrElemTy = objtype }) = hashInt 3 `combine` hash objtype
+  hash (PtrType { ptrTy = objtype }) = hashInt 3 `combine` hash objtype
   hash (IntType { intSigned = signed, intSize = size }) =
     hashInt 4 `combine` hash signed `combine` hash size
   hash (IdType { idName = Typename str }) = hash str
@@ -625,8 +628,8 @@ instance Graph gr => Format (Module gr) where
           if packed
             then sep [format "<{", fielddocs, format "}>"]
             else sep [lbrace, fielddocs, rbrace ]
-      formatType (PtrType (GC.Native inner)) = formatType inner <> "*"
-      formatType (PtrType (GC.GC ptrclass hdr)) =
+      formatType (PtrType (Native inner)) = formatType inner <> "*"
+      formatType (PtrType (GC ptrclass hdr)) =
         ptrclass <+> formatGCHeader hdr
       formatType (ArrayType (Just size) inner) =
         formatType inner <> brackets size

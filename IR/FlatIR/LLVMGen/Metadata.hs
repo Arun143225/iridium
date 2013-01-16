@@ -29,25 +29,24 @@ import Data.Word
 import IR.FlatIR.Syntax
 import Prelude hiding (mapM_)
 
-import qualified IR.GC.Types as GC
 import qualified LLVM.Core as LLVM
 
 -- XXX This is wrong
-mutabilityValue :: GC.Mutability -> IO LLVM.ValueRef
-mutabilityValue GC.Immutable = LLVM.mdString "const"
-mutabilityValue GC.Mutable = LLVM.mdString "mutable"
-mutabilityValue GC.WriteOnce = LLVM.mdString "writeonce"
+mutabilityValue :: Mutability -> IO LLVM.ValueRef
+mutabilityValue Immutable = LLVM.mdString "const"
+mutabilityValue Mutable = LLVM.mdString "mutable"
+mutabilityValue WriteOnce = LLVM.mdString "writeonce"
 
-mobilityValue :: GC.Mobility -> IO LLVM.ValueRef
-mobilityValue GC.Mobile = LLVM.mdString "mobile"
-mobilityValue GC.Immobile = LLVM.mdString "immobile"
+mobilityValue :: Mobility -> IO LLVM.ValueRef
+mobilityValue Mobile = LLVM.mdString "mobile"
+mobilityValue Immobile = LLVM.mdString "immobile"
 
-ptrClassValue :: GC.PtrClass -> IO LLVM.ValueRef
-ptrClassValue GC.Strong = LLVM.mdString "strong"
-ptrClassValue GC.Soft = LLVM.mdString "soft"
-ptrClassValue GC.Weak = LLVM.mdString "weak"
-ptrClassValue GC.Finalizer = LLVM.mdString "final"
-ptrClassValue GC.Phantom = LLVM.mdString "phantom"
+ptrClassValue :: PtrClass -> IO LLVM.ValueRef
+ptrClassValue Strong = LLVM.mdString "strong"
+ptrClassValue Soft = LLVM.mdString "soft"
+ptrClassValue Weak = LLVM.mdString "weak"
+ptrClassValue Finalizer = LLVM.mdString "final"
+ptrClassValue Phantom = LLVM.mdString "phantom"
 
 -- Generate the metadata descriptors for all of the generated GC types
 genMetadata :: Graph gr =>
@@ -61,7 +60,7 @@ genMetadata :: Graph gr =>
 genMetadata (Module { modGCHeaders = gcheaders, modGenGCs = gengcs,
                       modTypes = types}) llvmmod _ =
   let
-    genFieldNode :: (String, GC.Mutability, Type) -> IO LLVM.ValueRef
+    genFieldNode :: (String, Mutability, Type) -> IO LLVM.ValueRef
     genFieldNode (str, mut, ty) =
       do
         namemd <- LLVM.mdString str
@@ -70,37 +69,42 @@ genMetadata (Module { modGCHeaders = gcheaders, modGenGCs = gengcs,
         LLVM.mdNode [ namemd, mutmd, tymd ]
 
     genTypedesc :: Type -> IO LLVM.ValueRef
-    genTypedesc (StructType True fields) =
+    genTypedesc (StructType { structPacked = True,
+                              structFields = fields }) =
       do
         classmd <- LLVM.mdString "struct"
         packedmd <- LLVM.mdString "packed"
         fieldnodes <- mapM genFieldNode (elems fields)
         LLVM.mdNode (classmd : packedmd : fieldnodes)
-    genTypedesc (StructType False fields) =
+    genTypedesc (StructType { structPacked = False,
+                              structFields = fields }) =
       do
         classmd <- LLVM.mdString "struct"
         packedmd <- LLVM.mdString "nonpacked"
         fieldnodes <- mapM genFieldNode (elems fields)
         LLVM.mdNode (classmd : packedmd : fieldnodes)
-    genTypedesc (ArrayType (Just size) inner) =
+    genTypedesc (ArrayType { arrayLen = Just size,
+                             arrayElemTy = inner }) =
       do
         classmd <- LLVM.mdString "array"
         innernode <- genTypedesc inner
         LLVM.mdNode [ classmd, LLVM.constInt LLVM.int64Type size False,
                       innernode ]
-    genTypedesc (ArrayType Nothing inner) =
+    genTypedesc (ArrayType { arrayLen = Nothing,
+                             arrayElemTy = inner }) =
       do
         classmd <- LLVM.mdString "array"
         innernode <- genTypedesc inner
         LLVM.mdNode [ classmd,
                       LLVM.constInt LLVM.int64Type (0 :: Word) False,
                       innernode ]
-    genTypedesc (PtrType (GC.Native inner)) =
+    genTypedesc (PtrType { ptrTy = Native { nativeTy = inner } }) =
       do
         classmd <- LLVM.mdString "nativeptr"
         innernode <- genTypedesc inner
         LLVM.mdNode [ classmd, innernode ]
-    genTypedesc (PtrType (GC.GC ptrclass header)) =
+    genTypedesc (PtrType { ptrTy = GC { gcClass = ptrclass,
+                                        gcTy = header } }) =
       let
         (tname, mob, _) = gcheaders ! header
         (_, Just inner) = types ! tname
@@ -110,35 +114,35 @@ genMetadata (Module { modGCHeaders = gcheaders, modGenGCs = gengcs,
         ptrclassmd <- ptrClassValue ptrclass
         innernode <- genTypedesc inner
         LLVM.mdNode [ classmd, ptrclassmd, mobmd, innernode ]
-    genTypedesc (IntType _ size) =
+    genTypedesc (IntType { intSize = size }) =
       do
         classmd <- LLVM.mdString "int"
         LLVM.mdNode [ classmd, LLVM.constInt LLVM.int32Type size False ]
-    genTypedesc (IdType tname) =
+    genTypedesc (IdType { idName = tname }) =
       let
         (str, _) = types ! tname
       in do
         classmd <- LLVM.mdString "named"
         mdstr <- LLVM.mdString str
         LLVM.mdNode [ classmd, mdstr ]
-    genTypedesc (FloatType 32) =
+    genTypedesc (FloatType { floatSize = 32 }) =
       do
         classmd <- LLVM.mdString "float"
         LLVM.mdNode [ classmd ]
-    genTypedesc (FloatType 64) =
+    genTypedesc (FloatType { floatSize = 64 }) =
       do
         classmd <- LLVM.mdString "double"
         LLVM.mdNode [ classmd ]
-    genTypedesc (FloatType 128) =
+    genTypedesc (FloatType { floatSize = 128 }) =
       do
         classmd <- LLVM.mdString "fp128"
         LLVM.mdNode [ classmd ]
-    genTypedesc (FloatType bits) =
+    genTypedesc (FloatType { floatSize = bits }) =
       error ("Cannot generate " ++ show bits ++ "-bit floating point type")
-    genTypedesc UnitType =
+    genTypedesc (UnitType _) =
       error "Don't generate type descriptors for unit types"
     -- XXX This might not be right
-    genTypedesc (FuncType _ _) =
+    genTypedesc (FuncType {}) =
       error "Cannot generate GC'ed function type signature"
 
     genHeaderMD :: GCHeader -> IO ()

@@ -31,16 +31,15 @@ import IR.FlatIR.Syntax
 import Prelude hiding (mapM_, mapM, foldr, foldl, sequence)
 
 import qualified LLVM.Core as LLVM
-import qualified IR.GC.Types as GC
 
-mobilityStr :: GC.Mobility -> String
-mobilityStr GC.Mobile = "mobile"
-mobilityStr GC.Immobile = "immobile"
+mobilityStr :: Mobility -> String
+mobilityStr Mobile = "mobile"
+mobilityStr Immobile = "immobile"
 
-mutabilityStr :: GC.Mutability -> String
-mutabilityStr GC.Immutable = "const"
-mutabilityStr GC.WriteOnce = "writeonce"
-mutabilityStr GC.Mutable = "mutable"
+mutabilityStr :: Mutability -> String
+mutabilityStr Immutable = "const"
+mutabilityStr WriteOnce = "writeonce"
+mutabilityStr Mutable = "mutable"
 
 -- | Generate an array mapping GCHeaders to llvm globals declarations
 -- that will be defined by the GC implementation system.
@@ -58,7 +57,7 @@ genGCHeaders :: Graph gr =>
 genGCHeaders (Module { modTypes = types, modGCHeaders = gcheaders })
              llvmmod ctx _ =
   let
-    mapfun :: LLVM.TypeRef -> (Typename, GC.Mobility, GC.Mutability) ->
+    mapfun :: LLVM.TypeRef -> (Typename, Mobility, Mutability) ->
               IO LLVM.ValueRef
     mapfun hdrty (tname, mob, mut) =
       let

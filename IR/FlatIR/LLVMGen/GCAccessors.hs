@@ -31,11 +31,10 @@ import IR.FlatIR.Syntax
 import Prelude hiding (mapM_)
 
 import qualified IR.FlatIR.LLVMGen.Types as Types
-import qualified IR.Common.GC as GC
 import qualified LLVM.Core as LLVM
 
-constant :: Bool -> GC.Mutability -> Bool
-constant _ GC.Immutable = True
+constant :: Bool -> Mutability -> Bool
+constant _ Immutable = True
 constant True _ = True
 constant _ _ = False
 
@@ -88,7 +87,7 @@ genAccessors m @ (Module { modTypes = types }) llvmmod ctx typedefs =
               else return ()
 
         genTypeAccessors' :: String -> Bool -> [LLVM.TypeRef] ->
-                            (String, GC.Mutability, Type) -> IO ()
+                            (String, Mutability, Type) -> IO ()
         genTypeAccessors' prefix isconst args
                           (name, mut,
                            StructType { structFields = fields }) =
@@ -104,7 +103,7 @@ genAccessors m @ (Module { modTypes = types }) llvmmod ctx typedefs =
         genTypeAccessors' prefix isconst args (name, mut, ty') =
           genDecls (constant isconst mut) ty' (prefix ++ "." ++ name) args
       in do
-        genTypeAccessors' "core.types" False [tyref] (str, GC.Mutable, ty)
+        genTypeAccessors' "core.types" False [tyref] (str, Mutable, ty)
         return ()
     genTypeAccessors _ = return ()
   in
