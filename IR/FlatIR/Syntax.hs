@@ -130,8 +130,6 @@ data Type =
   | PtrType {
       -- | The pointed-to type.
       ptrElemTy :: !(GC.Type GCHeader Type),
-      -- | Whether or not the pointer points to volatile memory.
-      ptrVolatile :: !Bool,
       -- | The position in source from which this arises.
       ptrPos :: !Pos
     }
