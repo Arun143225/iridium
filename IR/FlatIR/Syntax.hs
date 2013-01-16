@@ -97,21 +97,66 @@ import qualified IR.GC.Types as GC
 -- types. XXX add a variant type
 data Type =
   -- | A function type
-    FuncType Type [Type]
+    FuncType {
+      -- | The return type of the function.
+      funcRetTy :: Type,
+      -- | The types of the arguments.
+      funcArgTys :: [Type],
+      -- | The position in source from which this arises.
+      funcPos :: !Pos
+    }
   -- | A structure, representing both tuples and records
-  | StructType !Bool (Array Fieldname (String, GC.Mutability, Type))
+  | StructType {
+      -- | Whether or not the layout is strict.
+      structStrict :: !Bool,
+      -- | The fields of the struct.
+      structFields :: (Array Fieldname (String, GC.Mutability, Type))
+      -- | The position in source from which this arises.
+      structPos :: !Pos
+    }
   -- | An array.  Unlike LLVM arrays, these may be variable-sized
-  | ArrayType !(Maybe Word) Type
+  | ArrayType {
+      -- | The length of the array, if known.
+      arrayLen :: !(Maybe Word),
+      -- | The type of array elements.
+      arrayElemTy :: Type
+      -- | The position in source from which this arises.
+      arrayPos :: !Pos
+    }
   -- | Pointers, both native and GC
-  | PtrType !(GC.Type GCHeader Type)
+  | PtrType {
+      -- | The pointed-to type.
+      ptrElemTy :: !(GC.Type GCHeader Type),
+      -- | Whether or not the pointer points to volatile memory.
+      ptrVolatile :: !Bool,
+      -- | The position in source from which this arises.
+      ptrPos :: !Pos
+    }
   -- | An integer, possibly signed, with a size
-  | IntType !Bool !Word
+  | IntType {
+      -- | Whether or not the int is signed
+      intSigned :: !Bool,
+      -- | The size of the int in bits
+      intSize ::  !Word,
+      -- | The position in source from which this arises.
+      intPos :: !Pos
+    }
   -- | A defined type
-  | IdType !Typename
+  | IdType {
+      -- | The name for this type.
+      idName :: !Typename,
+      -- | The position in source from which this arises.
+      idPos :: !Pos
+    }
   -- | Floating point types
-  | FloatType !Word
+  | FloatType { 
+      -- | The size of the float in bits.
+      floatSize :: !Word,
+      -- | The position in source from which this arises.
+      floatPos :: !Pos
+    }
   -- | The unit type, equivalent to SML unit and C/Java void
-  | UnitType
+  | UnitType !Pos
     deriving Eq
 
 -- | A label, indexes blocks
@@ -142,14 +187,28 @@ newtype GCHeader = GCHeader Word
 -- All basic blocks end in a transfer.
 data Transfer =
   -- | A direct jump
-    Goto !Label
-  -- | A case expression
-  | Case Exp [(Integer, Label)] !Label
+    Goto {
+      gotoLabel :: !Label,
+      -- | The position in source from which this arises.
+      gotoPos :: !Pos
+    }
+  -- | A (integer) case expression
+  | Case {
+      caseExp :: Exp,
+      caseCases :: [(Integer, Label)],
+      caseDefault :: !Label,
+      -- | The position in source from which this arises.
+      casePos :: !Pos
+    }
   -- | A return
-  | Ret (Maybe Exp)
+  | Ret { 
+      retVal :: Maybe Exp,
+      -- | The position in source from which this arises.
+      retPos :: !Pos
+    }
   -- | An unreachable instruction, usually following a call with no
   -- return
-  | Unreachable
+  | Unreachable !Pos
 
 -- | Binary operators.  The Arithmetic operators exist for matched
 -- integer and floating point types.  Subtraction always produces a
@@ -166,15 +225,32 @@ data Unop = Neg | NegNW | Not
 -- | An assignable value
 data LValue =
   -- | An array (or pointer) index
-    Index Exp Exp
+    Index {
+      idxArray :: Exp,
+      idxIndex Exp,
+      idxPos :: !Pos
+    }
   -- | A field in a structure
-  | Field Exp !Fieldname
+  | Field {
+      fieldVal :: Exp,
+      fieldName :: !Fieldname,
+      fieldPos :: !Pos
+    }
   -- | Dereference a pointer
-  | Deref Exp
+  | Deref {
+      derefVal :: Exp,
+      derefPos :: !Pos
+    }
   -- | A local value (local variable or argument)
-  | Var !Id
+  | Var {
+      varName :: !Id,
+      varPos :: !Pos
+    }
   -- | A global value (global variable or function)
-  | Global !Globalname
+  | Global {
+      globalName :: !Globalname,
+      globalPos :: !Pos
+    }
 
 -- | An expression
 data Exp =
@@ -183,11 +259,24 @@ data Exp =
   -- represeting GC allocation, malloc, and alloca.
     GCAlloc !GCHeader (Maybe Exp) (Maybe Exp)
   -- | A binary operation
-  | Binop !Binop Exp Exp
+  | Binop { 
+      binopOp :: !Binop
+      binopLeft :: Exp,
+      binopRight :: Exp,
+      binopPos :: !Pos
+    }
   -- | Call a function.  XXX extend this with static link information.
-  | Call Exp [Exp]
+  | Call {
+      callFunc :: Exp,
+      callArgs :: [Exp],
+      callPos :: !Pos
+    }
   -- | A unary operation
-  | Unop !Unop Exp
+  | Unop {
+      unopOp :: !Unop,
+      unopExp ::  Exp,
+      unopPos :: !Pos
+    }
   -- | A conversion from one type to another.
   | Conv Type Exp
   -- | Treat an expression as if it were the given type regardless of
@@ -208,20 +297,35 @@ data Exp =
 -- | A statement.  Represents an effectful action.
 data Stm =
   -- | Update the given lvalue
-    Move LValue Exp
+    Move {
+      -- | The destination LValue.
+      moveTo :: LValue,
+      -- | The source expression.
+      moveFrom :: Exp,
+      -- | The position in source from which this originates.
+      movePos :: !Pos
   -- | Execute an expression
-  | Do Exp
+  | Do !Exp
 
 -- | A basic block
-data Block = Block [Stm] Transfer
+data Block =
+    Block {
+      -- | The statements in the basic block
+      blockStms :: [Stm]
+      -- | The transfer for the basic block
+      blockXfer :: Transfer
+      -- | The position in source from which this arises.
+      blockPos :: !Pos
+    }
 
--- | The body of a basic block
+-- | The body of a function
 data Body gr =
-  Body
-    -- | The entry block
-    Label
-    -- | The CFG
-    (gr Block ())
+    Body {
+      -- | The entry block
+      bodyEntry :: Label,
+      -- | The CFG
+      bodyCFG :: (gr Block ())
+    }
 
 -- | A global value.  Represents a global variable or a function.
 data Global gr =
@@ -237,7 +341,9 @@ data Global gr =
       -- | A list of the identifiers representing arguments
       funcParams :: [Id],
       -- | The function's body, if it has one
-      funcBody :: Maybe (Body gr)
+      funcBody :: Maybe (Body gr),
+      -- | The position in source from which this arises.
+      funcPos :: !Pos
     }
   -- | A global variable
   | GlobalVar {
@@ -246,24 +352,55 @@ data Global gr =
       -- | The type of the variable
       gvarTy :: Type,
       -- | The initializer
-      gvarInit :: Maybe Exp
+      gvarInit :: Maybe Exp,
+      -- | The position in source from which this arises.
+      gvarPos :: !Pos
     }
 
 -- | A module.  Represents a concept similar to an LLVM module.
-data Module gr = Module {
-  -- | Name of the module
-  modName :: !String,
-  -- | A map from typenames to their proper names and possibly their
-  -- definitions
-  modTypes :: Array Typename (String, Maybe Type),
-  -- | A map from GCHeaders to their definitions
-  modGCHeaders :: Array GCHeader (Typename, GC.Mobility, GC.Mutability),
-  -- | Generated GC types (this module will generate the signatures
-  -- and accessors)
-  modGenGCs :: [GCHeader],
-  -- | A map from global names to the corresponding functions
-  modGlobals :: Array Globalname (Global gr)
+data Module gr =
+  Module {
+    -- | Name of the module
+    modName :: !String,
+    -- | A map from typenames to their proper names and possibly their
+    -- definitions
+    modTypes :: Array Typename (String, Maybe Type),
+    -- | A map from GCHeaders to their definitions
+    modGCHeaders :: Array GCHeader (Typename, GC.Mobility, GC.Mutability),
+    -- | Generated GC types (this module will generate the signatures
+    -- and accessors)
+    modGenGCs :: [GCHeader],
+    -- | A map from global names to the corresponding functions
+    modGlobals :: Array Globalname (Global gr),
+    -- | The position in source from which this arises.  This is here
+    -- solely to record filenames in a unified way.
+    modPos :: !Pos
 }
+
+instance Position Type where
+  pos (IdType { idPos = p }) = p
+  pos (FloatType { floatPos = p }) = p
+  pos (UnitType p) = p
+
+instance Position Transfer where
+  pos (Goto { gotoPos = p }) = p
+  pos (Case { casePos = p }) = p
+  pos (Ret { retPos = p }) = p
+  pos (Unreachable p) = p
+
+instance Position Stm where
+  pos (Move { movePos = p }) = p
+  pos (Do expr) = pos expr
+
+instance Position Block where
+  pos (Block { blockPos = p }) = p
+
+instance Position Global where
+  pos (Function { funcPos = p }) = p
+  pos (GlobalVar { gvarPos = p }) = p
+
+instance Position Module where
+  pos (Module { modPos = p }) = p
 
 instance Hashable Typename where
   hash (Typename n) = hash n
