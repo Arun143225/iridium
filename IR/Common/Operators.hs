@@ -33,9 +33,11 @@ data Binop =
   | And | Or | Xor | Shl | Shr | Eq | Neq | Ge | Le | Gt | Lt
   | FOEq | FONeq | FOGt | FOGe | FOLt | FOLe
   | FUEq | FUNeq | FUGt | FUGe | FULt | FULe
+    deriving (Eq, Ord)
 
 -- | Unary operators
 data Unop = Neg | NegNW | Not
+    deriving (Eq, Ord)
 
 instance Hashable Unop where
   hash Neg = hashInt 1
