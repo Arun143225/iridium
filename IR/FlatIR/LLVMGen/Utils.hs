@@ -26,11 +26,12 @@ module IR.FlatIR.LLVMGen.Utils(
 
 import Data.Array.IArray
 import Data.Graph.Inductive
+import Data.Pos
 import IR.FlatIR.Syntax
 
 -- | The Flat IR type representing booleans.
-booltype :: Type
-booltype = IntType False 1
+booltype :: Pos -> Type
+booltype p = IntType { intSigned = False, intSize = 1, intPos = p }
 
 -- | Get the type of a global, constructing a function type if need
 -- be.
@@ -38,15 +39,17 @@ getGlobalType :: Graph gr => Module gr -> Globalname -> Type
 getGlobalType (Module { modGlobals = globals}) name =
   case globals ! name of
     Function { funcRetTy = retty, funcValTys = valtys,
-               funcParams = params} ->
-      FuncType retty (map ((!) valtys) params)
+               funcParams = params, funcPos = p } ->
+      FuncType { funcTyRetTy = retty, funcTyPos = p,
+                 funcTyArgTys = (map ((!) valtys) params) }
     GlobalVar { gvarTy = ty } -> ty
 
 -- | Chase down references and get a concrete type (if it
 -- leads to an opaque type, then return the named type
 getActualType :: Graph gr => Module gr -> Type -> Type
-getActualType irmodule @ (Module { modTypes = types }) (IdType tyname) =
+getActualType irmodule @ (Module { modTypes = types })
+              idty @ (IdType { idName = tyname }) =
   case types ! tyname of
     (_, Just ty) -> getActualType irmodule ty
-    _ -> IdType tyname
+    _ -> idty
 getActualType _ ty = ty
