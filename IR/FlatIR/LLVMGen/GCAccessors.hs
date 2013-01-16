@@ -31,7 +31,7 @@ import IR.FlatIR.Syntax
 import Prelude hiding (mapM_)
 
 import qualified IR.FlatIR.LLVMGen.Types as Types
-import qualified IR.GC.Types as GC
+import qualified IR.Common.GC as GC
 import qualified LLVM.Core as LLVM
 
 constant :: Bool -> GC.Mutability -> Bool
@@ -89,11 +89,15 @@ genAccessors m @ (Module { modTypes = types }) llvmmod ctx typedefs =
 
         genTypeAccessors' :: String -> Bool -> [LLVM.TypeRef] ->
                             (String, GC.Mutability, Type) -> IO ()
-        genTypeAccessors' prefix isconst args (name, mut, StructType _ fields) =
+        genTypeAccessors' prefix isconst args
+                          (name, mut,
+                           StructType { structFields = fields }) =
           do
             mapM_ (genTypeAccessors' (prefix ++ "." ++ name)
                                      (constant isconst mut) args) fields
-        genTypeAccessors' prefix isconst args (name, mut, ArrayType _ inner) =
+        genTypeAccessors' prefix isconst args
+                          (name, mut,
+                           ArrayType { arrayElemTy = inner }) =
           do
             genTypeAccessors' prefix isconst (LLVM.int32Type : args)
                                      (name, mut, inner)
