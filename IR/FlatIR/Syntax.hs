@@ -501,10 +501,16 @@ instance Graph gr => Format (Module gr) where
       braceBlock ("module" <+> name) content
 
 instance Show Label where
-  show = show . format
+  show (Label l) = "L" ++ show l
+
+instance Show Fieldname where
+  show (Fieldname f) = "f" ++ show f
 
 instance Show Id where
-  show = show . format
+  show (Id v) = "%" ++ show v
+
+instance Show Globalname where
+  show (Globalname g) = "@" ++ show g 
 
 instance Show Unop where
   show = show . format
