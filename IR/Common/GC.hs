@@ -129,6 +129,11 @@ instance Show Mutability where
   show Mutable = "mutable"
   show WriteOnce = "writeonce"
 
+instance (Show gctype, Show nativetype) =>
+         Show (Type gctype nativetype) where
+  show (GC ptrclass ty) = "gc " ++ show ptrclass ++ " " ++ show ty
+  show (Native ty) = "native " ++ show ty
+
 instance Format Mobility where
   format = format . show
 
@@ -137,3 +142,8 @@ instance Format PtrClass where
 
 instance Format Mutability where
   format = format . show
+
+instance (Format gctype, Format nativetype) =>
+         Format (Type gctype nativetype) where
+  format (GC ptrclass ty) = "gc" <+> show ptrclass <+> format ty
+  format (Native ty) = "native" <+> format ty
