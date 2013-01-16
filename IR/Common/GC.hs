@@ -19,7 +19,7 @@
 -- | This module defines type constructors that represent all GC
 -- options.  This allows sharing of GC type metadata amongst the
 -- various IR languages.
-module IR.GC.Types(
+module IR.Common.GC(
        -- * GC Type Metadata
        Type(..),
 
