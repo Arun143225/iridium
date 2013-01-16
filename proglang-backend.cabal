@@ -1,5 +1,5 @@
 Name:                proglang-backend
-Version:             0.1.0.0
+Version:             0.2.0.0
 Synopsis:            Intermediate representations and facilities for
                      compiling programming languages
 Description:
@@ -19,17 +19,17 @@ Cabal-version:       >= 1.9.2
 Library
   build-depends:        base, mtl, data-hash, pretty, fgl, array,
                         bitarray, proglang-util, llvm-bindings, containers
-  other-modules:        IR.FlatIR.Syntax,
-                        IR.FlatIR.LLVMGen
-                        IR.FlatIR.LLVMGen.CodeGen,
-                        IR.FlatIR.LLVMGen.ConstValue,
-                        IR.FlatIR.LLVMGen.GCAccessors,
-                        IR.FlatIR.LLVMGen.GCHeaders,
-                        IR.FlatIR.LLVMGen.Globals,
-                        IR.FlatIR.LLVMGen.LLVMValue,
-                        IR.FlatIR.LLVMGen.Metadata,
-                        IR.FlatIR.LLVMGen.Types,
-                        IR.FlatIR.LLVMGen.Utils,
-                        IR.FlatIR.LLVMGen.VarAccess
-                        IR.GC.Types
+  other-modules:        IR.Common.GC,
+--                        IR.FlatIR.Syntax,
+--                        IR.FlatIR.LLVMGen
+--                        IR.FlatIR.LLVMGen.CodeGen,
+--                        IR.FlatIR.LLVMGen.ConstValue,
+--                        IR.FlatIR.LLVMGen.GCAccessors,
+--                        IR.FlatIR.LLVMGen.GCHeaders,
+--                        IR.FlatIR.LLVMGen.Globals,
+--                        IR.FlatIR.LLVMGen.LLVMValue,
+--                        IR.FlatIR.LLVMGen.Metadata,
+--                        IR.FlatIR.LLVMGen.Types,
+--                        IR.FlatIR.LLVMGen.Utils,
+--                        IR.FlatIR.LLVMGen.VarAccess
 
