@@ -8,15 +8,17 @@ This package is designed to assist in compiling languages to produce
 executable files.  At the moment, it contains one IR language, though
 others are planned.
 
- * SimpleIR: A simply-typed language with flat scopes, whose
-   instructions correspond to LLVM's.  However, SimpleIR has mutable
+ * FlatIR: A simply-typed language with flat scopes, whose
+   instructions correspond to LLVM's.  However, FlatIR has mutable
    variables, supports variant types (not implemented), and allows
    variables of any type (not implemented).  Also, it makes
    instruction selection decisions based on the types of arguments.
 
-   Simple IR also contains rather elaborate information pertaining to
+   FlatIR also contains rather elaborate information pertaining to
    garbage collection.
 
+ * SimpleIR (not implemented): A simply-typed IR language with nested
+   scopes and patterns.  Subtyping is based on 
 
  * PolyIR (not implemented): A polymorphically-typed IR language with
    nested scopes and patterns.
@@ -24,14 +26,67 @@ others are planned.
 
 Compilation steps are as follows:
 
- * SimpleIR to LLVM: convert types and generate metadata to capture
+ * FlatIR to LLVM: convert types and generate metadata to capture
    garbage collection and other information, SSA construction,
    generate LLVM instructions.
+
+ * SimpleIR to FlatIR: compile pattern matches to branching code,
+   implement static linking to get rid of nested scopes.  Possibly
+   implement dispatch as well.
 
  * PolyIR to SimpleIR (not implemented): monomorphize and boxing to
    eliminate polymorphic types, scope analysis and static linking.
 
 
+Specific things to be done:
+
+ * General:
+
+   1) Move operators, primitive types out to a separate Common
+      package.
+
+   2) Better error messages (needs a redesign of Format from
+      proglang-utils)
+
+   3) Create monad for compiling programs (possibly create monad
+      inside llvm-bindings library)
+
+ * FlatIR:
+
+   1) Make datatypes use records (in Haskell).
+
+   2) Add variant types and support for compiling them.
+
+   3) Design general-purpose Alloc to replace GCAlloc, add support for
+      compiling it.
+
+   4) Redesign ConstValue to fall back to generating initializer code.
+
+      a) Have global variables generate static initializers.
+
+      b) Track global variables that are made non-constant by the need
+         for static initializers, add llvm.invariant intrinsics to the
+         preludes of all functions that use them.
+
+      c) Attempt to generate select instructions wherever branch
+         expressions can be turned into constants.
+
+   5) Add exceptions and continuations.
+
+   6) Output TBAA data.
+
+   7) Add possible-value data to integer types
+
+   8) Link GC headers and GC read/write/addr functions into metadata directly
+
+   9) Rework metadata to correspond to llvm plugin.
+
+   10) Add Box type and operations.
+
+   11) Build table of GC accessor functions, implement read/write,
+       possibly address of GC fields.
+
+   12) Output debugging information, have meaningful variable names
 
 *NOTE*: This package in under active design and development.  The
  SimpleIR language is likely to change and/or expand.  Compilation to
