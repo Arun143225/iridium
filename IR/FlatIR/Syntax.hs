@@ -65,14 +65,17 @@ module IR.FlatIR.Syntax(
 
 import Data.Array
 import Data.Graph.Inductive.Graph
-import Data.Graph.Inductive.Query.DFS
+--import Data.Graph.Inductive.Query.DFS
 import Data.Hash
 import Data.Maybe
+import Data.Pos
 import Data.Word
+import IR.Common.Operators
 import Prelude hiding (head)
-import Text.Format
+--import Prelude.Extras(Eq1, Ord1)
+--import Text.Format
 
-import qualified IR.GC.Types as GC
+import qualified IR.Common.GC as GC
 
 -- FlatIR is a simply-typed IR intended to be close to LLVM, but not
 -- in SSA form.  It is intended primarily as a jumping-off point for
@@ -99,18 +102,18 @@ data Type =
   -- | A function type
     FuncType {
       -- | The return type of the function.
-      funcRetTy :: Type,
+      funcTyRetTy :: Type,
       -- | The types of the arguments.
-      funcArgTys :: [Type],
+      funcTyArgTys :: [Type],
       -- | The position in source from which this arises.
-      funcPos :: !Pos
+      funcTyPos :: !Pos
     }
   -- | A structure, representing both tuples and records
   | StructType {
       -- | Whether or not the layout is strict.
-      structStrict :: !Bool,
+      structPacked :: !Bool,
       -- | The fields of the struct.
-      structFields :: (Array Fieldname (String, GC.Mutability, Type))
+      structFields :: Array Fieldname (String, GC.Mutability, Type),
       -- | The position in source from which this arises.
       structPos :: !Pos
     }
@@ -119,7 +122,7 @@ data Type =
       -- | The length of the array, if known.
       arrayLen :: !(Maybe Word),
       -- | The type of array elements.
-      arrayElemTy :: Type
+      arrayElemTy :: Type,
       -- | The position in source from which this arises.
       arrayPos :: !Pos
     }
@@ -157,7 +160,7 @@ data Type =
     }
   -- | The unit type, equivalent to SML unit and C/Java void
   | UnitType !Pos
-    deriving Eq
+    deriving (Ord, Eq)
 
 -- | A label, indexes blocks
 newtype Label = Label Node
@@ -188,20 +191,25 @@ newtype GCHeader = GCHeader Word
 data Transfer =
   -- | A direct jump
     Goto {
+      -- | The jump target.
       gotoLabel :: !Label,
       -- | The position in source from which this arises.
       gotoPos :: !Pos
     }
   -- | A (integer) case expression
   | Case {
-      caseExp :: Exp,
+      -- | The value being decided upon.  Must be an integer value.
+      caseVal :: Exp,
+      -- | The cases.  There must be at least one case.
       caseCases :: [(Integer, Label)],
+      -- | The default case.
       caseDefault :: !Label,
       -- | The position in source from which this arises.
       casePos :: !Pos
     }
   -- | A return
   | Ret { 
+      -- | The return value, if one exists.
       retVal :: Maybe Exp,
       -- | The position in source from which this arises.
       retPos :: !Pos
@@ -209,48 +217,51 @@ data Transfer =
   -- | An unreachable instruction, usually following a call with no
   -- return
   | Unreachable !Pos
-
--- | Binary operators.  The Arithmetic operators exist for matched
--- integer and floating point types.  Subtraction always produces a
--- signed integer type.
-data Binop =
-    Add | AddNW | Sub | SubNW | Mul | MulNW | Div | Mod
-  | And | Or | Xor | Shl | Shr | Eq | Neq | Ge | Le | Gt | Lt
-  | FOEq | FONeq | FOGt | FOGe | FOLt | FOLe
-  | FUEq | FUNeq | FUGt | FUGe | FULt | FULe
-
--- | Unary operators
-data Unop = Neg | NegNW | Not
+    deriving (Ord, Eq)
 
 -- | An assignable value
 data LValue =
   -- | An array (or pointer) index
     Index {
-      idxArray :: Exp,
-      idxIndex Exp,
+      -- | The indexed value.  Must be an array.
+      idxVal :: Exp,
+      -- | The index value.  Must be an integer type.
+      idxIndex :: Exp,
+      -- | The position in source from which this arises.
       idxPos :: !Pos
     }
   -- | A field in a structure
   | Field {
+      -- | The value whose field is being accessed.  Must be a
+      -- structure type.
       fieldVal :: Exp,
+      -- | The name of the field being accessed.
       fieldName :: !Fieldname,
+      -- | The position in source from which this arises.
       fieldPos :: !Pos
     }
   -- | Dereference a pointer
   | Deref {
+      -- | The value being dereferenced.  Must be a pointer type.
       derefVal :: Exp,
+      -- | The position in source from which this arises.
       derefPos :: !Pos
     }
   -- | A local value (local variable or argument)
   | Var {
+      -- | The name of the local value.
       varName :: !Id,
+      -- | The position in source from which this arises.
       varPos :: !Pos
     }
   -- | A global value (global variable or function)
   | Global {
+      -- | The name of the global value.
       globalName :: !Globalname,
+      -- | The position in source from which this arises.
       globalPos :: !Pos
     }
+    deriving (Ord, Eq)
 
 -- | An expression
 data Exp =
@@ -259,64 +270,121 @@ data Exp =
   -- represeting GC allocation, malloc, and alloca.
     GCAlloc !GCHeader (Maybe Exp) (Maybe Exp)
   -- | A binary operation
-  | Binop { 
-      binopOp :: !Binop
+  | Binop {
+      -- | The operator.
+      binopOp :: !Binop,
+      -- | The left hand side.
       binopLeft :: Exp,
+      -- | The right hand side.
       binopRight :: Exp,
+      -- | The position in source from which this arises.
       binopPos :: !Pos
     }
-  -- | Call a function.  XXX extend this with static link information.
+  -- | Call a function.
   | Call {
+      -- | The function being called.  Must be a function value.
       callFunc :: Exp,
+      -- | The arguments to the function.
       callArgs :: [Exp],
+      -- | The position in source from which this arises.
       callPos :: !Pos
     }
   -- | A unary operation
   | Unop {
+      -- | The operator.
       unopOp :: !Unop,
-      unopExp ::  Exp,
+      -- | The operand.
+      unopVal ::  Exp,
+      -- | The position in source from which this arises.
       unopPos :: !Pos
     }
   -- | A conversion from one type to another.
-  | Conv Type Exp
+  | Conv {
+      -- | The type to which the value is being converted.
+      convTy :: Type,
+      -- | The value being converted.
+      convVal :: Exp,
+      -- | The position in source from which this arises.
+      convPos :: !Pos
+    }
   -- | Treat an expression as if it were the given type regardless of
   -- its actual type.
-  | Cast Type Exp
-  -- | An LValue
-  | LValue LValue
+  | Cast {
+      -- | The type to which the value is being cast.
+      castTy :: Type,
+      -- | The value being cast.
+      castVal :: Exp,
+      -- | The position in source from which this arises.
+      castPos :: !Pos
+    }
   -- | Address of an LValue
-  | AddrOf LValue
+  | AddrOf {
+      -- | The value having its address taken.
+      addrofVal :: LValue,
+      -- | The position in source from which this arises.
+      addrofPos :: !Pos
+    }
   -- | A structure constant
-  | StructConst Type (Array Fieldname Exp)
+  | StructConst {
+      -- | The constant's type, must be a struct type.
+      structConstType :: Type,
+      -- | The constant's field values
+      structConstFields :: Array Fieldname Exp,
+      -- | The position in source from which this arises.
+      structConstPos :: !Pos
+    }
   -- | An array constant
-  | ArrayConst Type [Exp]
+  | ArrayConst {
+      -- | The constant's type, must be an array type.
+      arrayConstType :: Type,
+      -- | The constant's values
+      arrayConstVals :: [Exp],
+      -- | The position in source from which this arises.
+      arrayConstPos :: !Pos
+    }
   -- | A numerical constant with a given size and signedness XXX add a
   -- floating point constant.
-  | NumConst Type !Integer
+  | NumConst {
+      -- | The constant's type, must be an integer or float type.
+      numConstType :: Type,
+      -- | The constant's value
+      numConstVal :: !Integer,
+      -- | The position in source from which this arises.
+      numConstPos :: !Pos
+    }
+  -- | An LValue
+  | LValue !LValue 
+    deriving (Ord, Eq)
 
 -- | A statement.  Represents an effectful action.
 data Stm =
   -- | Update the given lvalue
     Move {
       -- | The destination LValue.
-      moveTo :: LValue,
+      moveDst :: LValue,
       -- | The source expression.
-      moveFrom :: Exp,
+      moveSrc :: Exp,
       -- | The position in source from which this originates.
       movePos :: !Pos
+    }
   -- | Execute an expression
   | Do !Exp
+    deriving (Ord, Eq)
 
 -- | A basic block
 data Block =
     Block {
       -- | The statements in the basic block
-      blockStms :: [Stm]
+      blockStms :: [Stm],
       -- | The transfer for the basic block
-      blockXfer :: Transfer
+      blockXfer :: Transfer,
       -- | The position in source from which this arises.
       blockPos :: !Pos
     }
+    deriving (Ord, Eq)
+
+-- There is no straightforward ordering, equality, or hashing on the
+-- remaining types.
 
 -- | The body of a function
 data Body gr =
@@ -359,28 +427,53 @@ data Global gr =
 
 -- | A module.  Represents a concept similar to an LLVM module.
 data Module gr =
-  Module {
-    -- | Name of the module
-    modName :: !String,
-    -- | A map from typenames to their proper names and possibly their
-    -- definitions
-    modTypes :: Array Typename (String, Maybe Type),
-    -- | A map from GCHeaders to their definitions
-    modGCHeaders :: Array GCHeader (Typename, GC.Mobility, GC.Mutability),
-    -- | Generated GC types (this module will generate the signatures
-    -- and accessors)
-    modGenGCs :: [GCHeader],
-    -- | A map from global names to the corresponding functions
-    modGlobals :: Array Globalname (Global gr),
-    -- | The position in source from which this arises.  This is here
-    -- solely to record filenames in a unified way.
-    modPos :: !Pos
-}
+    Module {
+      -- | Name of the module
+      modName :: !String,
+      -- | A map from typenames to their proper names and possibly their
+      -- definitions
+      modTypes :: Array Typename (String, Maybe Type),
+      -- | A map from GCHeaders to their definitions
+      modGCHeaders :: Array GCHeader (Typename, GC.Mobility, GC.Mutability),
+      -- | Generated GC types (this module will generate the signatures
+      -- and accessors)
+      modGenGCs :: [GCHeader],
+      -- | A map from global names to the corresponding functions
+      modGlobals :: Array Globalname (Global gr),
+      -- | The position in source from which this arises.  This is here
+      -- solely to record filenames in a unified way.
+      modPos :: !Pos
+    }
 
 instance Position Type where
+  pos (FuncType { funcTyPos = p }) = p
+  pos (StructType { structPos = p }) = p
+  pos (ArrayType { arrayPos = p }) = p
+  pos (PtrType { ptrPos = p }) = p
+  pos (IntType { intPos = p }) = p
   pos (IdType { idPos = p }) = p
   pos (FloatType { floatPos = p }) = p
   pos (UnitType p) = p
+
+instance Position Exp where
+  pos (Binop { binopPos = p }) = p
+  pos (Call { callPos = p }) = p
+  pos (Conv { convPos = p }) = p
+  pos (Cast { castPos = p }) = p
+  pos (Unop { unopPos = p }) = p
+  pos (AddrOf { addrofPos = p }) = p
+  pos (StructConst { structConstPos = p }) = p
+  pos (ArrayConst { arrayConstPos = p }) = p
+  pos (NumConst { numConstPos = p }) = p
+  pos (LValue l) = pos l
+  pos (GCAlloc _ _ _) = error "GCAlloc is going away"
+
+instance Position LValue where
+  pos (Index { idxPos = p }) = p
+  pos (Field { fieldPos = p }) = p
+  pos (Deref { derefPos = p }) = p
+  pos (Var { varPos = p }) = p
+  pos (Global { globalPos = p }) = p
 
 instance Position Transfer where
   pos (Goto { gotoPos = p }) = p
@@ -395,11 +488,11 @@ instance Position Stm where
 instance Position Block where
   pos (Block { blockPos = p }) = p
 
-instance Position Global where
+instance Position (Global gr) where
   pos (Function { funcPos = p }) = p
   pos (GlobalVar { gvarPos = p }) = p
 
-instance Position Module where
+instance Position (Module gr) where
   pos (Module { modPos = p }) = p
 
 instance Hashable Typename where
@@ -409,21 +502,79 @@ instance Hashable GCHeader where
   hash (GCHeader n) = hash n
 
 instance Hashable Type where
-  hash (FuncType retty params) =
+  hash (FuncType { funcTyRetTy = retty, funcTyArgTys = params }) =
     hashInt 0 `combine` hash retty `combine` hash params
-  hash (StructType packed fields) =
+  hash (StructType { structPacked = packed, structFields = fields }) =
     hashInt 1 `combine` hash packed `combine` hashFoldable fields
-  hash (ArrayType Nothing inner) =
+  hash (ArrayType { arrayLen = Nothing, arrayElemTy = inner }) =
     hashInt 2 `combine` hashInt 0 `combine` hash inner
-  hash (ArrayType (Just size) inner) =
+  hash (ArrayType { arrayLen = Just size, arrayElemTy = inner }) =
     hashInt 2 `combine` hash size `combine` hash inner
-  hash (PtrType objtype) = hashInt 3 `combine` hash objtype
-  hash (IntType signed size) =
+  hash (PtrType { ptrElemTy = objtype }) = hashInt 3 `combine` hash objtype
+  hash (IntType { intSigned = signed, intSize = size }) =
     hashInt 4 `combine` hash signed `combine` hash size
-  hash (IdType (Typename str)) = hash str
-  hash (FloatType size) = hashInt 5 `combine` hash size
-  hash UnitType = hashInt 6
+  hash (IdType { idName = Typename str }) = hash str
+  hash (FloatType { floatSize = size }) = hashInt 5 `combine` hash size
+  hash (UnitType {}) = hashInt 6
 
+instance Hashable Transfer where
+  hash (Goto { gotoLabel = label }) = hashInt 1 `combine` hash label
+  hash (Case { caseVal = val, caseCases = cases, caseDefault = def }) =
+    hashInt 2 `combine` hash val `combine` hash cases `combine` hash def
+  hash (Ret { retVal = val }) = hashInt 3 `combine` hash val
+  hash (Unreachable _) = hashInt 4
+
+instance Hashable LValue where
+  hash (Index { idxVal = val, idxIndex = idx }) =
+    hashInt 1 `combine` hash val `combine` hash idx
+  hash (Field { fieldVal = val, fieldName = name }) =
+    hashInt 2 `combine` hash val `combine` hash name
+  hash (Deref { derefVal = val }) = hashInt 3 `combine` hash val
+  hash (Var { varName = name }) = hashInt 4 `combine` hash name
+  hash (Global { globalName = name }) = hashInt 5 `combine` hash name
+
+instance Hashable Exp where
+  hash (Binop { binopOp = op, binopLeft = left, binopRight = right }) =
+    hashInt 1 `combine` hash op `combine` hash left `combine` hash right
+  hash (Call { callFunc = func, callArgs = args }) =
+    hashInt 2 `combine` hash func `combine` hash args
+  hash (Unop { unopOp = op, unopVal = val }) =
+    hashInt 3 `combine` hash op `combine` hash val
+  hash (Conv { convTy = ty, convVal = val }) =
+    hashInt 4 `combine` hash ty `combine` hash val
+  hash (Cast { castTy = ty, castVal = val }) =
+    hashInt 5 `combine` hash ty `combine` hash val
+  hash (AddrOf { addrofVal = val }) = hashInt 6 `combine` hash val
+  hash (StructConst { structConstType = ty, structConstFields = fields }) =
+    foldr combine (hashInt 7 `combine` hash ty) (map hash (elems fields))
+  hash (ArrayConst { arrayConstType = ty, arrayConstVals = vals }) =
+    hashInt 8 `combine` hash ty `combine` hash vals
+  hash (NumConst { numConstType = ty, numConstVal = val }) =
+    hashInt 9 `combine` hash ty `combine` hash val
+  hash (LValue lval) = hashInt 10 `combine` hash lval
+  hash (GCAlloc _ _ _) = error "GCAlloc is going away"
+
+instance Hashable Stm where
+  hash (Move { moveSrc = src, moveDst = dst }) = 
+    hashInt 1 `combine` hash src `combine` hash dst
+  hash (Do val) = hashInt 2 `combine` hash val
+
+instance Hashable Block where
+  hash (Block { blockStms = stms, blockXfer = xfer }) =
+    hash stms `combine` hash xfer
+
+instance Hashable Label where
+  hash (Label node) = hash node
+
+instance Hashable Id where
+  hash (Id name) = hash name
+
+instance Hashable Globalname where
+  hash (Globalname name) = hash name
+
+instance Hashable Fieldname where
+  hash (Fieldname name) = hash name
+{-
 instance Format Label where
   format (Label l) = "L" <> l
 
@@ -435,44 +586,6 @@ instance Format Id where
 
 instance Format Globalname where
   format (Globalname g) = "@" <> g 
-
-instance Format Unop where
-  format Neg = format "neg"
-  format NegNW = format "negnw"
-  format Not = format "not"
-
-instance Format Binop where
-  format Add = format "add"
-  format AddNW = format "addnw"
-  format Sub = format "sub"
-  format SubNW = format "subnw"
-  format Mul = format "mul"
-  format MulNW = format "mulnw"
-  format Div = format "div"
-  format Mod = format "mod"
-  format Shl = format "shl"
-  format Shr = format "shr"
-  format And = format "and"
-  format Or = format "or"
-  format Xor = format "xor"
-  format Eq = format "eq"
-  format Neq = format "ne"
-  format Ge = format "ge"
-  format Le = format "le"
-  format Gt = format "gt"
-  format Lt = format "lt"
-  format FOEq = format "foeq"
-  format FONeq = format "foneq"
-  format FOGe = format "foge"
-  format FOLe = format "fole"
-  format FOGt = format "fogt"
-  format FOLt = format "folt"
-  format FUEq = format "fueq"
-  format FUNeq = format "funeq"
-  format FUGe = format "fuge"
-  format FULe = format "fule"
-  format FUGt = format "fugt"
-  format FULt = format "fult"
 
 -- This mess is a good example of what I mean about format and a
 -- naming function.
@@ -657,3 +770,4 @@ instance Show Binop where
 
 instance Graph gr => Show (Module gr) where
   show = show . format
+-}
