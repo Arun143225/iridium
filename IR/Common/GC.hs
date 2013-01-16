@@ -42,8 +42,7 @@ data Type
     GC !PtrClass gctype
   -- | An object in non-GC space
   | Native nativetype
-    deriving Eq
-
+    deriving (Eq, Ord)
 
 -- | Object mobility.  All native objects are immobile.  GC objects
 -- can be mobile or immobile.  Immobile objects must be supported for
