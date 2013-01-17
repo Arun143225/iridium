@@ -328,7 +328,7 @@ data Exp =
   -- | A structure constant
   | StructConst {
       -- | The constant's type, must be a struct type.
-      structConstType :: Type,
+      structConstTy :: Type,
       -- | The constant's field values
       structConstFields :: Array Fieldname Exp,
       -- | The position in source from which this arises.
@@ -337,7 +337,7 @@ data Exp =
   -- | An array constant
   | ArrayConst {
       -- | The constant's type, must be an array type.
-      arrayConstType :: Type,
+      arrayConstTy :: Type,
       -- | The constant's values
       arrayConstVals :: [Exp],
       -- | The position in source from which this arises.
@@ -347,7 +347,7 @@ data Exp =
   -- floating point constant.
   | NumConst {
       -- | The constant's type, must be an integer or float type.
-      numConstType :: Type,
+      numConstTy :: Type,
       -- | The constant's value
       numConstVal :: !Integer,
       -- | The position in source from which this arises.
@@ -416,12 +416,14 @@ data Global gr =
     }
   -- | A global variable
   | GlobalVar {
-      -- | The name of the variable
+      -- | The name of the variable.
       gvarName :: !String,
-      -- | The type of the variable
+      -- | The type of the variable.
       gvarTy :: Type,
-      -- | The initializer
+      -- | The initializer.
       gvarInit :: Maybe Exp,
+      -- | The variable's mutability.
+      gvarMutability :: Mutability,
       -- | The position in source from which this arises.
       gvarPos :: !Pos
     }
@@ -546,11 +548,11 @@ instance Hashable Exp where
   hash (Cast { castTy = ty, castVal = val }) =
     hashInt 5 `combine` hash ty `combine` hash val
   hash (AddrOf { addrofVal = val }) = hashInt 6 `combine` hash val
-  hash (StructConst { structConstType = ty, structConstFields = fields }) =
+  hash (StructConst { structConstTy = ty, structConstFields = fields }) =
     foldr combine (hashInt 7 `combine` hash ty) (map hash (elems fields))
-  hash (ArrayConst { arrayConstType = ty, arrayConstVals = vals }) =
+  hash (ArrayConst { arrayConstTy = ty, arrayConstVals = vals }) =
     hashInt 8 `combine` hash ty `combine` hash vals
-  hash (NumConst { numConstType = ty, numConstVal = val }) =
+  hash (NumConst { numConstTy = ty, numConstVal = val }) =
     hashInt 9 `combine` hash ty `combine` hash val
   hash (LValue lval) = hashInt 10 `combine` hash lval
   hash (GCAlloc _ _ _) = error "GCAlloc is going away"
