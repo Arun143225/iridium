@@ -24,13 +24,14 @@ module IR.FlatIR.LLVMGen.ConstValue(
 import Data.Array.IArray
 import Data.Array.Unboxed(UArray)
 import Data.Graph.Inductive
+import Data.Pos
 import Data.Word
+import IR.Common.Ptr
 import IR.FlatIR.Syntax
 import IR.FlatIR.LLVMGen.LLVMValue
 
 import qualified IR.FlatIR.LLVMGen.Types as Types
 import qualified IR.FlatIR.LLVMGen.Utils as Utils
-import qualified IR.GC.Types as GC
 import qualified LLVM.Core as LLVM
 
 -- | Generate an LLVM value representing an initializer for a global
@@ -48,9 +49,10 @@ genConst :: Graph gr =>
          -- ^ The initializer being generated.
          -> IO (LLVM.ValueRef, Type)
          -- ^ The LLVM value representing the initializer, and its FlatIR type
-genConst irmod @ (Module { modTypes = types, modGCHeaders = gcheaders })
+genConst irmod @ (Module { {-modTypes = types, modGCHeaders = gcheaders-} })
          ctx typedefs decls =
   let
+    getGlobalMutability = Utils.getGlobalMutability irmod
     getGlobalType = Utils.getGlobalType irmod
     booltype = Utils.booltype
     toLLVMType = Types.toLLVMType irmod ctx typedefs
@@ -62,13 +64,15 @@ genConst irmod @ (Module { modTypes = types, modGCHeaders = gcheaders })
       let
         genConstLValue' :: [Word] -> LValue -> IO (LLVM.ValueRef, Type)
         -- For field access with an LValue inner, build up the fields list
-        genConstLValue' fields (Field (LValue lval) (Fieldname field)) =
+        genConstLValue' fields (Field { fieldVal = LValue lval,
+                                        fieldName = Fieldname field }) =
           genConstLValue' (field : fields) lval
         -- When we get to the end, generate an extractvalue constant
         -- and figure out the types.
-        genConstLValue' fields (Field expr (Fieldname field)) =
+        genConstLValue' fields (Field { fieldName = Fieldname field,
+                                        fieldVal = expr }) =
           let
-            foldfun (StructType _ innerfields) ind =
+            foldfun (StructType { structFields = innerfields }) ind =
               let
                 (_, _, ty) = innerfields ! (Fieldname ind)
               in
@@ -77,24 +81,24 @@ genConst irmod @ (Module { modTypes = types, modGCHeaders = gcheaders })
 
             indlist = field : fields
           in do
-            (exp', ty) <- genConst' expr
-            val <- LLVM.constExtractValue exp' indlist
+            (expr', ty) <- genConst' expr
+            val <- LLVM.constExtractValue expr' indlist
             return (val, foldl foldfun ty indlist)
         -- XXX should handle indexes just like fields, as long as the indexes
         -- are constant.
-        genConstLValue' _ (Index _ _) =
+        genConstLValue' _ (Index {}) =
           error "Index in constant initializer"
         -- Dereferences are an error, since this can't be computed in
         -- advance.
-        genConstLValue' _ (Deref _) =
+        genConstLValue' _ (Deref {}) =
           error "Dereference in constant initializer"
         -- Global references are an error, since we can only know
         -- their addresses.
-        genConstLValue' _ (Global _) =
+        genConstLValue' _ (Global {}) =
           error "Global variable access in constant initializer"
         -- Variable references are an error, since there are no
         -- locals.
-        genConstLValue' _ (Var _) =
+        genConstLValue' _ (Var {}) =
           error "Variable access in constant initializer"
       in
         genConstLValue' []
@@ -107,270 +111,313 @@ genConst irmod @ (Module { modTypes = types, modGCHeaders = gcheaders })
       let
         getGEP :: [LLVM.ValueRef] -> LLVM.ValueRef -> LLVM.ValueRef
         getGEP [] val = val
-        getGEP offsets val = LLVM.constGEP val (toValue (Fieldname 0) : offsets)
+        getGEP offsets val =
+          LLVM.constGEP val (toValue (Fieldname 0) : offsets)
 
+        -- The returned type here is the pointer *element* type
         genConstLValueAddr' :: [LLVM.ValueRef] -> LValue ->
-                               IO (LLVM.ValueRef, Type)
+                               IO (LLVM.ValueRef, Mutability, Type)
         -- For fields, add to the index list and continue
-        genConstLValueAddr' offsets (Field (LValue innerlval) field) =
+        genConstLValueAddr' offsets (Field { fieldVal = LValue innerlval,
+                                             fieldName = field }) =
           do
-            (val, ty') <-
+            (val, outermut, ty') <-
               genConstLValueAddr' (toValue field : offsets) innerlval
             case ty' of
-              StructType _ innerfields ->
+              StructType { structFields = innerfields } ->
                 let
-                  (_, _, fieldty) = innerfields ! field
+                  (_, innermut, fieldty) = innerfields ! field
                 in
-                  return (val, fieldty)
+                  return (val, mergeMutability outermut innermut, fieldty)
               _ -> error "Cannot take field index of given type"
         -- We can only take the address of a global
-        genConstLValueAddr' _ (Field _ _) =
+        genConstLValueAddr' _ (Field {}) =
           error "addrof applied to non-addressable value"
         -- For indexes, add to the index list and continue
-        genConstLValueAddr' offsets (Index (LValue innerlval) ind) =
+        genConstLValueAddr' offsets (Index { idxVal = LValue innerlval,
+                                             idxIndex = ind }) =
           do
             (ind', _) <- genConst' ind
-            (val, ty') <- genConstLValueAddr' (ind' : offsets) innerlval
+            (val, mut, ty') <- genConstLValueAddr' (ind' : offsets) innerlval
             case ty' of
-              ArrayType _ innerty -> return (val, innerty)
+              ArrayType { arrayElemTy = innerty } ->
+                return (val, mut, innerty)
               _ -> error "Given type cannot be indexed"
-        -- XXX something seems wrong here
-        genConstLValueAddr' offsets (Index expr ind) =
+        genConstLValueAddr' _ (Index {}) =
+          error "addrof applied to non-addressable value"
+{-
+        genConstLValueAddr' offsets (Index { idxVal = expr,
+                                             idxIndex = ind }) =
           do
             (ind', _) <- genConst' ind
             (expr', ty) <- genConst' expr
             case ty of
-              ArrayType _ innerty ->
-                return (LLVM.constGEP expr' (ind' : offsets), innerty)
+              ArrayType { arrayElemTy = innerty } ->
+                return (LLVM.constGEP expr' (ind' : offsets), mut, innerty)
               _ -> error "Given type cannot be indexed"
+-}
         -- There cannot be a dereference in a constant initializer
-        genConstLValueAddr' _ (Deref (LValue _)) =
+        genConstLValueAddr' _ (Deref { derefVal = LValue _ }) =
           error "Dereference in constant initializer"
         -- XXX something seems wrong here
-        genConstLValueAddr' offsets (Deref expr) =
+        genConstLValueAddr' _ (Deref {}) =
+          error "addrof applied to non-addressable value"
+{-
+        genConstLValueAddr' offsets (Deref { derefVal = expr }) =
           do
             (exp', ty) <- genConst' expr
             case ty of
-              PtrType (GC.Native elemty) ->
-                return (getGEP offsets exp', elemty)
-              PtrType (GC.GC _ ind) ->
+              PtrType { ptrTy = Native { nativeTy = elemty,
+                                         nativeMutability = mut } } ->
+                return (getGEP offsets exp', mut, elemty)
+              PtrType { ptrTy = GC { gcTy = ind, gcPos = p,
+                                     gcMutability = mut } } ->
                 let
                   (tyname, _, _) = gcheaders ! ind
                   elemty = case types ! tyname of
                     (_, Just elemty') -> elemty'
-                    _ -> IdType tyname
+                    _ -> IdType { idName = tyname, idPos = p }
                 in
-                  return (getGEP offsets exp', elemty)
+                  return (getGEP offsets exp', mut, elemty)
               _ -> error "Cannot take address of constant of given type"
+-}
         -- We can take the address of a global
-        genConstLValueAddr' offsets (Global g) =
+        genConstLValueAddr' offsets (Global { globalName = name }) =
           let
-            ty = getGlobalType g
-            val = getGEP offsets (decls ! g)
+            ty = getGlobalType name
+            val = getGEP offsets (decls ! name)
+            mut = getGlobalMutability name
           in
-            return (val, ty)
+            return (val, mut, ty)
         -- There are no local variables
-        genConstLValueAddr' _ (Var _) =
+        genConstLValueAddr' _ (Var {}) =
           error "Variable access in constant initializer"
       in do
-        (val, ty) <- genConstLValueAddr' [] lval
-        return (val, PtrType (GC.Native ty))
+        (val, mut, ty) <- genConstLValueAddr' [] lval
+        return (val, PtrType { ptrTy = Native { nativeMutability = mut,
+                                                nativeTy = ty },
+                               ptrPos = pos lval })
 
     -- Generate a constant initializer for a global variable
     genConst' :: Exp -> IO (LLVM.ValueRef, Type)
-    genConst' (Binop op l r) =
+    genConst' (Binop { binopOp = op, binopLeft = l,
+                       binopRight = r, binopPos = posn }) =
       do
         (l', lty) <- genConst' l
         (r', rty) <- genConst' r
         -- Compile each operation using the types of the operands
         case (op, lty, rty) of
-          (Add, IntType _ _, IntType _ _) ->
+          (Add, IntType {}, IntType {}) ->
             return (LLVM.constAdd l' r', lty)
-          (Add, FloatType _, FloatType _) ->
+          (Add, FloatType {}, FloatType {}) ->
             return (LLVM.constFAdd l' r', lty)
-          (AddNW, IntType True _, IntType True _) ->
+          (AddNW, IntType { intSigned = True },
+           IntType { intSigned = True }) ->
             do
               addval <- LLVM.constNSWAdd l' r'
               return (addval, lty)
-          (AddNW, IntType False _, IntType False _) ->
+          (AddNW, IntType { intSigned = False },
+           IntType { intSigned = False }) ->
             do
               addval <- LLVM.constNUWAdd l' r'
               return (addval, lty)
-          (Sub, IntType _ _, IntType _ _) ->
+          (Sub, IntType {}, IntType {}) ->
             return (LLVM.constSub l' r', lty)
-          (Sub, FloatType _, FloatType _) ->
+          (Sub, FloatType {}, FloatType {}) ->
             return (LLVM.constFSub l' r', lty)
-          (SubNW, IntType True _, IntType True _) ->
+          (SubNW, IntType { intSigned = True },
+           IntType { intSigned = True }) ->
             do
               subval <- LLVM.constNSWSub l' r'
               return (subval, lty)
-          (SubNW, IntType False _, IntType False _) ->
+          (SubNW, IntType { intSigned = False },
+           IntType { intSigned = False }) ->
             do
               subval <- LLVM.constNUWSub l' r'
               return (subval, lty)
-          (Mul, IntType _ _, IntType _ _) ->
+          (Mul, IntType {}, IntType {}) ->
             return (LLVM.constMul l' r', lty)
-          (Mul, FloatType _, FloatType _) ->
+          (Mul, FloatType {}, FloatType {}) ->
             return (LLVM.constFMul l' r', lty)
-          (MulNW, IntType True _, IntType True _) ->
+          (MulNW, IntType { intSigned = True },
+           IntType { intSigned = True }) ->
             do
               mulval <- LLVM.constNSWMul l' r'
               return (mulval, lty)
-          (MulNW, IntType False _, IntType True _) ->
+          (MulNW, IntType { intSigned = False },
+           IntType { intSigned = False }) ->
             do
               mulval <- LLVM.constNUWMul l' r'
               return (mulval, lty)
-          (Div, IntType True _, IntType True _) ->
+          (Div, IntType { intSigned = True },
+           IntType { intSigned = True }) ->
             return (LLVM.constUDiv l' r', lty)
-          (Div, IntType False _, IntType False _) ->
+          (Div, IntType { intSigned = False },
+           IntType { intSigned = False }) ->
             return (LLVM.constSDiv l' r', lty)
-          (Div, FloatType _, FloatType _) ->
+          (Div, FloatType {}, FloatType {}) ->
             return (LLVM.constFDiv l' r', lty)
-          (Mod, IntType True _, IntType True _) ->
+          (Mod, IntType { intSigned = True },
+           IntType { intSigned = True }) ->
             return (LLVM.constURem l' r', lty)
-          (Mod, IntType False _, IntType False _) ->
+          (Mod, IntType { intSigned = False },
+           IntType { intSigned = False }) ->
             return (LLVM.constSRem l' r', lty)
-          (Mod, FloatType _, FloatType _) ->
+          (Mod, FloatType {}, FloatType {}) ->
             return (LLVM.constFRem l' r', lty)
-          (And, IntType _ _, IntType _ _) ->
+          (And, IntType {}, IntType {}) ->
             return (LLVM.constAnd l' r', lty)
-          (Or, IntType _ _, IntType _ _) ->
+          (Or, IntType {}, IntType {}) ->
             return (LLVM.constOr l' r', lty)
-          (Xor, IntType _ _, IntType _ _) ->
+          (Xor, IntType {}, IntType {}) ->
             return (LLVM.constXor l' r', lty)
-          (Shl, IntType _ _, IntType _ _) ->
+          (Shl, IntType {}, IntType {}) ->
             return (LLVM.constShl l' r', lty)
-          (Shr, IntType True _, IntType _ _) ->
+          (Shr, IntType { intSigned = True }, IntType {}) ->
             return (LLVM.constAShr l' r', lty)
-          (Shr, IntType False _, IntType _ _) ->
+          (Shr, IntType { intSigned = False }, IntType {}) ->
             return (LLVM.constLShr l' r', lty)
-          (Eq, IntType _ _, IntType _ _) ->
-            return (LLVM.constICmp LLVM.IntEQ l' r', booltype)
-          (Neq, IntType _ _, IntType _ _) ->
-            return (LLVM.constICmp LLVM.IntNE l' r', booltype)
-          (Ge, IntType True _, IntType True _) ->
-            return (LLVM.constICmp LLVM.IntSGE l' r', booltype)
-          (Ge, IntType False _, IntType False _) ->
-            return (LLVM.constICmp LLVM.IntUGE l' r', booltype)
-          (Gt, IntType False _, IntType False _) ->
-            return (LLVM.constICmp LLVM.IntUGT l' r', booltype)
-          (Gt, IntType True _, IntType True _) ->
-            return (LLVM.constICmp LLVM.IntSGT l' r', booltype)
-          (Le, IntType False _, IntType False _) ->
-            return (LLVM.constICmp LLVM.IntULE l' r', booltype)
-          (Le, IntType True _, IntType True _) ->
-            return (LLVM.constICmp LLVM.IntSLE l' r', booltype)
-          (Lt, IntType False _, IntType False _) ->
-            return (LLVM.constICmp LLVM.IntULT l' r', booltype)
-          (Lt, IntType True _, IntType True _) ->
-            return (LLVM.constICmp LLVM.IntSLT l' r', booltype)
-          (FOEq, FloatType _, FloatType _) ->
-            return (LLVM.constFCmp LLVM.RealOEQ l' r', booltype)
-          (FONeq, FloatType _, FloatType _) ->
-            return (LLVM.constFCmp LLVM.RealONE l' r', booltype)
-          (FOGe, FloatType _, FloatType _) ->
-            return (LLVM.constFCmp LLVM.RealOGE l' r', booltype)
-          (FOGt, FloatType _, FloatType _) ->
-            return (LLVM.constFCmp LLVM.RealOGT l' r', booltype)
-          (FOLe, FloatType _, FloatType _) ->
-            return (LLVM.constFCmp LLVM.RealOLE l' r', booltype)
-          (FOLt, FloatType _, FloatType _) ->
-            return (LLVM.constFCmp LLVM.RealOLT l' r', booltype)
-          (FUEq, FloatType _, FloatType _) ->
-            return (LLVM.constFCmp LLVM.RealUEQ l' r', booltype)
-          (FUNeq, FloatType _, FloatType _) ->
-            return (LLVM.constFCmp LLVM.RealUNE l' r', booltype)
-          (FUGe, FloatType _, FloatType _) ->
-            return (LLVM.constFCmp LLVM.RealUGE l' r', booltype)
-          (FUGt, FloatType _, FloatType _) ->
-            return (LLVM.constFCmp LLVM.RealUGT l' r', booltype)
-          (FULe, FloatType _, FloatType _) ->
-            return (LLVM.constFCmp LLVM.RealULE l' r', booltype)
-          (FULt, FloatType _, FloatType _) ->
-            return (LLVM.constFCmp LLVM.RealULT l' r', booltype)
+          (Eq, IntType {}, IntType {}) ->
+            return (LLVM.constICmp LLVM.IntEQ l' r', booltype posn)
+          (Neq, IntType {}, IntType {}) ->
+            return (LLVM.constICmp LLVM.IntNE l' r', booltype posn)
+          (Ge, IntType { intSigned = True },
+           IntType { intSigned = True }) ->
+            return (LLVM.constICmp LLVM.IntSGE l' r', booltype posn)
+          (Ge, IntType { intSigned = False },
+           IntType { intSigned = False }) ->
+            return (LLVM.constICmp LLVM.IntUGE l' r', booltype posn)
+          (Gt, IntType { intSigned = False },
+           IntType { intSigned = False }) ->
+            return (LLVM.constICmp LLVM.IntUGT l' r', booltype posn)
+          (Gt, IntType { intSigned = True },
+           IntType { intSigned = True }) ->
+            return (LLVM.constICmp LLVM.IntSGT l' r', booltype posn)
+          (Le, IntType { intSigned = False },
+           IntType { intSigned = False }) ->
+            return (LLVM.constICmp LLVM.IntULE l' r', booltype posn)
+          (Le, IntType { intSigned = True },
+           IntType { intSigned = True }) ->
+            return (LLVM.constICmp LLVM.IntSLE l' r', booltype posn)
+          (Lt, IntType { intSigned = False },
+           IntType { intSigned = False }) ->
+            return (LLVM.constICmp LLVM.IntULT l' r', booltype posn)
+          (Lt, IntType { intSigned = True },
+           IntType { intSigned = True }) ->
+            return (LLVM.constICmp LLVM.IntSLT l' r', booltype posn)
+          (FOEq, FloatType {}, FloatType {}) ->
+            return (LLVM.constFCmp LLVM.RealOEQ l' r', booltype posn)
+          (FONeq, FloatType {}, FloatType {}) ->
+            return (LLVM.constFCmp LLVM.RealONE l' r', booltype posn)
+          (FOGe, FloatType {}, FloatType {}) ->
+            return (LLVM.constFCmp LLVM.RealOGE l' r', booltype posn)
+          (FOGt, FloatType {}, FloatType {}) ->
+            return (LLVM.constFCmp LLVM.RealOGT l' r', booltype posn)
+          (FOLe, FloatType {}, FloatType {}) ->
+            return (LLVM.constFCmp LLVM.RealOLE l' r', booltype posn)
+          (FOLt, FloatType {}, FloatType {}) ->
+            return (LLVM.constFCmp LLVM.RealOLT l' r', booltype posn)
+          (FUEq, FloatType {}, FloatType {}) ->
+            return (LLVM.constFCmp LLVM.RealUEQ l' r', booltype posn)
+          (FUNeq, FloatType {}, FloatType {}) ->
+            return (LLVM.constFCmp LLVM.RealUNE l' r', booltype posn)
+          (FUGe, FloatType {}, FloatType {}) ->
+            return (LLVM.constFCmp LLVM.RealUGE l' r', booltype posn)
+          (FUGt, FloatType {}, FloatType {}) ->
+            return (LLVM.constFCmp LLVM.RealUGT l' r', booltype posn)
+          (FULe, FloatType {}, FloatType {}) ->
+            return (LLVM.constFCmp LLVM.RealULE l' r', booltype posn)
+          (FULt, FloatType {}, FloatType {}) ->
+            return (LLVM.constFCmp LLVM.RealULT l' r', booltype posn)
           _ -> error "Cannot generate binary operator for given types"
-    genConst' (Unop op inner) =
+    genConst' (Unop { unopOp = op, unopVal = inner }) =
       do
         (inner', ty) <- genConst' inner
         -- Compile the operation using the type of the operand
         case (op, ty) of
-          (Neg, IntType _ _) -> return (LLVM.constNeg inner', ty)
-          (NegNW, IntType True _) ->
+          (Neg, IntType {}) -> return (LLVM.constNeg inner', ty)
+          (NegNW, IntType { intSigned = True }) ->
             do
               negval <- LLVM.constNSWNeg inner'
               return (negval, ty)
-          (NegNW, IntType False _) ->
+          (NegNW, IntType { intSigned = False }) ->
             do
               negval <- LLVM.constNUWNeg inner'
               return (negval, ty)
-          (Neg, FloatType _) -> return (LLVM.constFNeg inner', ty)
-          (Not, IntType _ _) -> return (LLVM.constNot inner', ty)
+          (Neg, FloatType {}) -> return (LLVM.constFNeg inner', ty)
+          (Not, IntType {}) -> return (LLVM.constNot inner', ty)
           _ -> error "Cannot generate unary operator for the given type"
     -- Get an address from the LValue
-    genConst' (AddrOf lval) = genConstLValueAddr lval
+    genConst' (AddrOf { addrofVal = lval }) = genConstLValueAddr lval
     -- Get the value of the LValue
     genConst' (LValue lval) = genConstLValue lval
-    genConst' (Conv toty inner) =
+    genConst' (Conv { convTy = toty, convVal = inner }) =
       do
         toty' <- toLLVMType toty
         (inner', fromty) <- genConst' inner
         -- Generate a conversion based on the types
         case (fromty, toty) of
-          (IntType False fromsize, IntType _ tosize) ->
+          (IntType { intSigned = False, intSize = fromsize },
+           IntType { intSize = tosize }) ->
             if fromsize > tosize
               then return (LLVM.constTrunc inner' toty', toty)
               else if fromsize < tosize
                 then return (LLVM.constZExt inner' toty', toty)
                 else return (inner', toty)
-          (IntType True fromsize, IntType _ tosize) ->
+          (IntType { intSigned = True, intSize = fromsize},
+           IntType { intSize = tosize }) ->
             if fromsize > tosize
               then return (LLVM.constTrunc inner' toty', toty)
               else if fromsize < tosize
                 then return (LLVM.constSExt inner' toty', toty)
                 else return (inner', toty)
-          (FloatType fromsize, FloatType tosize) ->
+          (FloatType { floatSize = fromsize },
+           FloatType { floatSize = tosize }) ->
             if fromsize > tosize
               then return (LLVM.constFPTrunc inner' toty', toty)
               else if fromsize < tosize
                 then return (LLVM.constFPExt inner' toty', toty)
                 else return (inner', toty)
-          (IntType False _, FloatType _) ->
+          (IntType { intSigned = False }, FloatType {}) ->
             return (LLVM.constUIToFP inner' toty', toty)
-          (IntType True _, FloatType _) ->
+          (IntType { intSigned = True }, FloatType {}) ->
             return (LLVM.constSIToFP inner' toty', toty)
-          (FloatType _, IntType False _) ->
+          (FloatType {}, IntType { intSigned = False }) ->
             return (LLVM.constFPToUI inner' toty', toty)
-          (FloatType _, IntType True _) ->
+          (FloatType {}, IntType { intSigned = True }) ->
             return (LLVM.constFPToSI inner' toty', toty)
-          (IntType True _, PtrType _) ->
+          (IntType { intSigned = True }, PtrType {}) ->
             return (LLVM.constIntToPtr inner' toty', toty)
-          (PtrType _, IntType True _) ->
+          (PtrType {}, IntType { intSigned = True }) ->
             return (LLVM.constPtrToInt inner' toty', toty)
-          (PtrType _, PtrType _) ->
+          (PtrType {}, PtrType {}) ->
             do
               cast <- LLVM.constPointerCast inner' toty'
               return (cast, toty)
           _ -> error "Cannot generate conversion"
     -- Just generate a bitcast
-    genConst' (Cast toty inner) =
+    genConst' (Cast { castTy = toty, castVal = inner }) =
       do
         toty' <- toLLVMType toty
         (inner', _) <- genConst' inner
         return (LLVM.constBitCast inner' toty', toty)
     -- Generate a structure constant
-    genConst' (StructConst ty @ (StructType packed _) inits) =
+    genConst' (StructConst { structConstTy =
+                               ty @ (StructType { structPacked = packed }),
+                             structConstFields = inits }) =
       do
         inits' <- mapM (\field -> genConst' field >>= return . fst)
                        (elems inits)
         return (LLVM.constStruct inits' packed, ty)
     -- Generate an array constant
-    genConst' (ArrayConst ty inits) =
+    genConst' (ArrayConst { arrayConstTy = ty, arrayConstVals = inits }) =
       do
         ty' <- toLLVMType ty
         inits' <- mapM (\field -> genConst' field >>= return . fst) inits
         return (LLVM.constArray ty' inits', ty)
     -- Generate a numerical constant
-    genConst' (NumConst ty @ (IntType signed _) n) =
+    genConst' (NumConst { numConstTy = ty @ (IntType { intSigned = signed }),
+                          numConstVal = n }) =
       do
         ty' <- toLLVMType ty
         return (LLVM.constInt ty' n signed, ty)
