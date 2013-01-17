@@ -24,7 +24,7 @@ Library
                         IR.FlatIR.Syntax,
 --                        IR.FlatIR.LLVMGen
 --                        IR.FlatIR.LLVMGen.CodeGen,
---                        IR.FlatIR.LLVMGen.ConstValue,
+                        IR.FlatIR.LLVMGen.ConstValue,
                         IR.FlatIR.LLVMGen.GCAccessors,
                         IR.FlatIR.LLVMGen.GCHeaders,
 --                        IR.FlatIR.LLVMGen.Globals,
@@ -32,5 +32,5 @@ Library
                         IR.FlatIR.LLVMGen.Metadata,
                         IR.FlatIR.LLVMGen.Types,
                         IR.FlatIR.LLVMGen.Utils
---                        IR.FlatIR.LLVMGen.VarAccess
+                        IR.FlatIR.LLVMGen.VarAccess
 
