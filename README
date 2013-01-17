@@ -42,25 +42,20 @@ Specific things to be done:
 
  * General:
 
-   1) Move operators, primitive types out to a separate Common
-      package.
-
-   2) Better error messages (needs a redesign of Format from
+   1) Better error messages (needs a redesign of Format from
       proglang-utils)
 
-   3) Create monad for compiling programs (possibly create monad
+   2) Create monad for compiling programs (possibly create monad
       inside llvm-bindings library)
 
  * FlatIR:
 
-   1) Make datatypes use records (in Haskell).
+   1) Add variant types and support for compiling them.
 
-   2) Add variant types and support for compiling them.
-
-   3) Design general-purpose Alloc to replace GCAlloc, add support for
+   2) Design general-purpose Alloc to replace GCAlloc, add support for
       compiling it.
 
-   4) Redesign ConstValue to fall back to generating initializer code.
+   3) Redesign ConstValue to fall back to generating initializer code.
 
       a) Have global variables generate static initializers.
 
@@ -71,22 +66,22 @@ Specific things to be done:
       c) Attempt to generate select instructions wherever branch
          expressions can be turned into constants.
 
-   5) Add exceptions and continuations.
+   4) Add exceptions and continuations.
 
-   6) Output TBAA data.
+   5) Output TBAA data.
 
-   7) Add possible-value data to integer types
+   6) Add possible-value data to integer types
 
-   8) Link GC headers and GC read/write/addr functions into metadata directly
+   7) Link GC headers and GC read/write/addr functions into metadata directly
 
-   9) Rework metadata to correspond to llvm plugin.
+   8) Rework metadata to correspond to llvm plugin.
 
-   10) Add Box type and operations.
+   9) Add Box type and operations.
 
-   11) Build table of GC accessor functions, implement read/write,
+   10) Build table of GC accessor functions, implement read/write,
        possibly address of GC fields.
 
-   12) Output debugging information, have meaningful variable names
+   11) Output debugging information, have meaningful variable names
 
 *NOTE*: This package in under active design and development.  The
  SimpleIR language is likely to change and/or expand.  Compilation to
