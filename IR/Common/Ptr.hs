@@ -26,10 +26,14 @@ module IR.Common.Ptr(
        -- * Options
        Mobility(..),
        PtrClass(..),
-       Mutability(..)
+       Mutability(..),
+
+       -- * Utility Functions
+       mergeMutability
        ) where
 
 import Data.Hash
+import Data.Pos
 import Text.Format
 
 -- | The type of object pointed to by a pointer
@@ -45,7 +49,9 @@ data Ptr
       -- | The mutability of the pointed-to data.
       gcMutability :: !Mutability,
       -- | The underlying element type.
-      gcTy :: gctype
+      gcTy :: gctype,
+      -- | The position in source from which this originates.
+      gcPos :: !Pos
     }
   -- | An object in non-GC space
   | Native {
@@ -95,13 +101,46 @@ data PtrClass =
 -- variants thereof are of paramount importance during garbage
 -- collection.
 data Mutability =
-  -- | The field is immutable
+  -- | The field is immutable.
     Immutable
-  -- | The field is mutable
-  | Mutable
-  -- | The field can only be updated once (ie. initialized)
+  -- | The field can only be updated once (ie. initialized).  This is
+  -- used only by the garbage collector; for runtime's sake it counts
+  -- as mutable.
   | WriteOnce
+  -- | The field is mutable.
+  | Mutable
+  -- | The field is volatile.
+  | Volatile
+  -- | Like WriteOnce, but also volatile.
+  | VolatileOnce
     deriving (Eq, Ord)
+
+-- | Given the mutability of a defining struct and a field, decide
+-- what the actual mutability is.
+mergeMutability :: Mutability
+                -- ^ The struct's mutability.
+                -> Mutability
+                -- ^ The field's mutability.
+                -> Mutability
+                -- ^ The actual mutability.
+
+-- Immutable overrides everything else.
+mergeMutability Immutable _ = Immutable
+mergeMutability _ Immutable = Immutable
+-- VolatileOnce overrides everything else after immutability.
+mergeMutability VolatileOnce _ = VolatileOnce
+mergeMutability _ VolatileOnce = VolatileOnce
+-- Volatile and WriteOnce combine into VolatileOnce
+mergeMutability Volatile WriteOnce = VolatileOnce
+mergeMutability WriteOnce Volatile = VolatileOnce
+-- After immutability, volatility is strongest.
+mergeMutability Volatile _ = Volatile
+mergeMutability _ Volatile = Volatile
+-- Writeonce is weaker than volatility.
+mergeMutability WriteOnce _ = WriteOnce
+mergeMutability _ WriteOnce = WriteOnce
+-- Mutable carries no information
+mergeMutability Mutable Mutable = Mutable
 
 instance Hashable Mobility where
   hash Mobile = hashInt 1
@@ -118,6 +157,8 @@ instance Hashable Mutability where
   hash Immutable = hashInt 1
   hash Mutable = hashInt 2
   hash WriteOnce = hashInt 3
+  hash Volatile = hashInt 4
+  hash VolatileOnce = hashInt 5
 
 instance (Hashable gctype, Hashable nativetype) =>
          Hashable (Ptr gctype nativetype) where
@@ -141,6 +182,8 @@ instance Show Mutability where
   show Immutable = "immutable"
   show Mutable = "mutable"
   show WriteOnce = "writeonce"
+  show Volatile = "volatile"
+  show VolatileOnce = "volatileonce"
 
 instance (Show gctype, Show nativetype) =>
          Show (Ptr gctype nativetype) where
