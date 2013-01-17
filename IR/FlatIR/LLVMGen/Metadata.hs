@@ -36,6 +36,8 @@ mutabilityValue :: Mutability -> IO LLVM.ValueRef
 mutabilityValue Immutable = LLVM.mdString "const"
 mutabilityValue Mutable = LLVM.mdString "mutable"
 mutabilityValue WriteOnce = LLVM.mdString "writeonce"
+mutabilityValue Volatile = LLVM.mdString "mutable"
+mutabilityValue VolatileOnce = LLVM.mdString "writeonce"
 
 mobilityValue :: Mobility -> IO LLVM.ValueRef
 mobilityValue Mobile = LLVM.mdString "mobile"

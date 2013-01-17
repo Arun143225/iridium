@@ -32,15 +32,6 @@ import Prelude hiding (mapM_, mapM, foldr, foldl, sequence)
 
 import qualified LLVM.Core as LLVM
 
-mobilityStr :: Mobility -> String
-mobilityStr Mobile = "mobile"
-mobilityStr Immobile = "immobile"
-
-mutabilityStr :: Mutability -> String
-mutabilityStr Immutable = "const"
-mutabilityStr WriteOnce = "writeonce"
-mutabilityStr Mutable = "mutable"
-
 -- | Generate an array mapping GCHeaders to llvm globals declarations
 -- that will be defined by the GC implementation system.
 genGCHeaders :: Graph gr =>
@@ -63,7 +54,7 @@ genGCHeaders (Module { modTypes = types, modGCHeaders = gcheaders })
       let
         (str, _) = types ! tname
         name = "core.gc.typedesc." ++ str ++ "." ++
-          mobilityStr mob ++ "." ++ mutabilityStr mut
+          show mob ++ "." ++ show mut
       in do
         val <- LLVM.addGlobal llvmmod hdrty name
         LLVM.setGlobalConstant val True

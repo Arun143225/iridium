@@ -21,6 +21,7 @@
 module IR.FlatIR.LLVMGen.Utils(
        booltype,
        getGlobalType,
+       getGlobalMutability,
        getActualType
        ) where
 
@@ -43,6 +44,14 @@ getGlobalType (Module { modGlobals = globals}) name =
       FuncType { funcTyRetTy = retty, funcTyPos = p,
                  funcTyArgTys = (map ((!) valtys) params) }
     GlobalVar { gvarTy = ty } -> ty
+
+-- | Get the mutability of a global.  Note that all functions are
+-- immutable.
+getGlobalMutability :: Graph gr => Module gr -> Globalname -> Mutability
+getGlobalMutability (Module { modGlobals = globals }) name =
+  case globals ! name of
+    GlobalVar { gvarMutability = mut } -> mut
+    Function {} -> Immutable
 
 -- | Chase down references and get a concrete type (if it
 -- leads to an opaque type, then return the named type

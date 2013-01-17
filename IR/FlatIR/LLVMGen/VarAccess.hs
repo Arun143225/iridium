@@ -244,7 +244,7 @@ instance LLVMValue Access where
   toValue (StructAcc arr) = LLVM.constStruct (map toValue (elems arr)) False
 
 instance Show Index where
-  show (FieldInd fname) = "field " ++ show fname
+  show (FieldInd (Fieldname fname)) = "field " ++ show fname
   show (ValueInd _) = "value"
 
 instance Show Access where
