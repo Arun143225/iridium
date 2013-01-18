@@ -59,7 +59,7 @@ data Location =
   -- | A variable stored in an SSA binding
     BindLoc !LLVM.ValueRef
   -- | A variable stored in a memory location
-  | MemLoc !Bool !LLVM.ValueRef
+  | MemLoc !Mutability !LLVM.ValueRef
   -- | A structure, which refers to other local variables
   | StructLoc !(UArray Fieldname Word)
 
@@ -115,15 +115,15 @@ getVarLocation :: ValMap -> Id -> Location
 getVarLocation valmap (Id ind) =
   fromJust (Map.lookup ind valmap)
 
--- | Get the address of a variable, as well as whether or not it is 
+-- | Get the address of a variable, as well as its mutability
 genVarAddr :: LLVM.BuilderRef -> ValMap -> [Index] -> Id ->
-              IO (LLVM.ValueRef, Bool)
+              IO (LLVM.ValueRef, Mutability)
 genVarAddr builder valmap indexes var =
   case getVarLocation valmap var of
-    MemLoc volatile addr ->
+    MemLoc mut addr ->
       do
         out <- genGEP builder addr indexes
-        return (out, volatile)
+        return (out, mut)
     _ -> error ("Location has no address")
 
 -- | Generate an access to the given variable, with the given indexes.
@@ -138,11 +138,22 @@ genVarRead builder valmap indexes var =
         _ -> error "Indexes in read of non-aggregate variable"
     -- For a memory location, generate a GEP, then load, then build a
     -- direct access.
-    MemLoc volatile mem ->
+    MemLoc Volatile mem ->
       do
         addr <- genGEP builder mem indexes
         val <- LLVM.buildLoad builder addr ""
-        LLVM.setVolatile val volatile
+        LLVM.setVolatile val True
+        return (DirectAcc val)
+    MemLoc VolatileOnce mem ->
+      do
+        addr <- genGEP builder mem indexes
+        val <- LLVM.buildLoad builder addr ""
+        LLVM.setVolatile val True
+        return (DirectAcc val)
+    MemLoc _ mem ->
+      do
+        addr <- genGEP builder mem indexes
+        val <- LLVM.buildLoad builder addr ""
         return (DirectAcc val)
     -- For structures, we'll either recurse, or else build a structure
     -- access.
@@ -168,10 +179,19 @@ genRawVarWrite builder valmap acc var @ (Id name) =
 -- | This function handles writes to non-variables without indexes
 genRawWrite :: LLVM.BuilderRef -> ValMap -> Access -> Location -> IO ValMap
 -- We've got a value and a memory location.  Generate a store.
-genRawWrite builder valmap acc (MemLoc volatile addr) =
+genRawWrite builder valmap acc (MemLoc Volatile addr) =
   do
     store <- LLVM.buildStore builder (toValue acc) addr
-    LLVM.setVolatile store volatile
+    LLVM.setVolatile store True
+    return valmap
+genRawWrite builder valmap acc (MemLoc VolatileOnce addr) =
+  do
+    store <- LLVM.buildStore builder (toValue acc) addr
+    LLVM.setVolatile store True
+    return valmap
+genRawWrite builder valmap acc (MemLoc _ addr) =
+  do
+    _ <- LLVM.buildStore builder (toValue acc) addr
     return valmap
 -- For structures, we end up recursing.
 genRawWrite builder valmap acc (StructLoc fields) =
@@ -211,11 +231,22 @@ genWrite builder valmap acc [] loc =
   genRawWrite builder valmap acc loc
 -- We've got a value and a memory location.  Generate a GEP and store
 -- the value.
-genWrite builder valmap acc indexes (MemLoc volatile mem) =
+genWrite builder valmap acc indexes (MemLoc Volatile mem) =
   do
     addr <- LLVM.buildGEP builder mem (map toValue indexes) ""
     store <- LLVM.buildStore builder (toValue acc) addr
-    LLVM.setVolatile store volatile
+    LLVM.setVolatile store True
+    return valmap
+genWrite builder valmap acc indexes (MemLoc VolatileOnce mem) =
+  do
+    addr <- LLVM.buildGEP builder mem (map toValue indexes) ""
+    store <- LLVM.buildStore builder (toValue acc) addr
+    LLVM.setVolatile store True
+    return valmap
+genWrite builder valmap acc indexes (MemLoc _ mem) =
+  do
+    addr <- LLVM.buildGEP builder mem (map toValue indexes) ""
+    _ <- LLVM.buildStore builder (toValue acc) addr
     return valmap
 -- For structures, we recurse to strip away the fields
 genWrite builder valmap acc (FieldInd field : indexes) (StructLoc fields) =
