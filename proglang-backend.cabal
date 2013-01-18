@@ -22,12 +22,12 @@ Library
   other-modules:        IR.Common.Ptr,
                         IR.Common.Operator,
                         IR.FlatIR.Syntax,
---                        IR.FlatIR.LLVMGen
---                        IR.FlatIR.LLVMGen.CodeGen,
+                        IR.FlatIR.LLVMGen
+                        IR.FlatIR.LLVMGen.CodeGen,
                         IR.FlatIR.LLVMGen.ConstValue,
                         IR.FlatIR.LLVMGen.GCAccessors,
                         IR.FlatIR.LLVMGen.GCHeaders,
---                        IR.FlatIR.LLVMGen.Globals,
+                        IR.FlatIR.LLVMGen.Globals,
                         IR.FlatIR.LLVMGen.LLVMValue,
                         IR.FlatIR.LLVMGen.Metadata,
                         IR.FlatIR.LLVMGen.Types,
