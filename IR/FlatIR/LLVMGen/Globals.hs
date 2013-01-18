@@ -178,9 +178,10 @@ genDefs irmod @ (Module { modGlobals = globals }) ctx decls typedefs =
             buildPhiSet :: IOBitArray -> Node -> IO ()
             buildPhiSet modset node =
               let
-                Just (Block stms _) = lab graph node
+                Just (Block { blockStms = stms }) = lab graph node
 
-                appfun (Move (Var name') _) = addPhi modset node name'
+                appfun (Move { moveDst = Var { varName = name' } }) =
+                  addPhi modset node name'
                 appfun _ = return ()
               in do
                 mapM_ appfun stms
@@ -227,7 +228,7 @@ genDefs irmod @ (Module { modGlobals = globals }) ctx decls typedefs =
 
                 getArgVal :: LLVM.ValueRef -> Type -> (Word, ValMap) ->
                              IO (Location, Word, ValMap)
-                getArgVal baseval (StructType _ fields) vmap' =
+                getArgVal baseval (StructType { structFields = fields }) vmap' =
                   let
                     foldfun (vmap'', inds) (Fieldname field,
                                           (_, _, fieldty)) =
@@ -251,7 +252,7 @@ genDefs irmod @ (Module { modGlobals = globals }) ctx decls typedefs =
                 return (newind, Map.insert ind loc valmap)
 
             getVal :: Type -> (Word, ValMap) -> IO (Location, Word, ValMap)
-            getVal (StructType _ fields) vmap =
+            getVal (StructType { structFields = fields }) vmap =
               let
                 foldfun (vmap', inds) (_, (_, _, fieldty)) =
                   do
@@ -333,7 +334,8 @@ genDefs irmod @ (Module { modGlobals = globals }) ctx decls typedefs =
                                          subForest = nexts }) =
               let
                 valmapphis = addPhiVals curr valmapin
-                Just (Block stms trans) = lab graph curr
+                Just (Block { blockStms = stms, blockXfer = trans }) =
+                  lab graph curr
                 currblock = blocks ! curr
                 outs = suc graph curr
               in do
