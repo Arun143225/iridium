@@ -29,6 +29,7 @@ Library
                         IR.FlatIR.LLVMGen.GCHeaders,
                         IR.FlatIR.LLVMGen.Globals,
                         IR.FlatIR.LLVMGen.LLVMValue,
+                        IR.FlatIR.LLVMGen.MemAccess,
                         IR.FlatIR.LLVMGen.Metadata,
                         IR.FlatIR.LLVMGen.Types,
                         IR.FlatIR.LLVMGen.Utils
