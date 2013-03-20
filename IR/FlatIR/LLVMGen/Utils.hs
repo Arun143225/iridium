@@ -27,12 +27,14 @@ module IR.FlatIR.LLVMGen.Utils(
 
 import Data.Array.IArray
 import Data.Graph.Inductive
+import Data.Interval
 import Data.Pos
 import IR.FlatIR.Syntax
 
 -- | The Flat IR type representing booleans.
 booltype :: Pos -> Type
-booltype p = IntType { intSigned = False, intSize = 1, intPos = p }
+booltype p = IntType { intSigned = False, intSize = 1, intPos = p,
+                       intIntervals = fromIntervalList [Interval 0 1] }
 
 -- | Get the type of a global, constructing a function type if need
 -- be.
