@@ -82,7 +82,7 @@ genExp irmod ctx builder decls valtys typedefs valmap =
     genVarAddr = VarAccess.genVarAddr builder valmap
     genGEP = VarAccess.genGEP builder
     genExtractValue = VarAccess.genExtractValue builder
-    genVarRead = VarAccess.genVarRead builder valmap
+    genVarRead = VarAccess.genVarRead ctx builder valmap
     genLoad = MemAccess.genLoad ctx builder
 
     -- Generate code for getting the address of a given LValue and
@@ -572,6 +572,7 @@ genStm irmod ctx builder decls valtys typedefs valmap stm =
     genExp' = genExp irmod ctx builder decls valtys typedefs valmap
     genWrite = VarAccess.genWrite builder valmap
     getGlobalMutability = Utils.getGlobalMutability irmod
+    getGlobalType = Utils.getGlobalType irmod
 
     -- Generate code for reading an LValue.  Return an access and a type.
     genLValueWrite' :: Access -> [Index] -> LValue -> IO ValMap
@@ -581,8 +582,9 @@ genStm irmod ctx builder decls valtys typedefs valmap stm =
       do
         (DirectAcc inner', ty) <- genExp' inner
         case ty of
-          PtrType { ptrTy = Native { nativeMutability = mut } } ->
-            genWrite acc indexes (MemLoc mut inner')
+          PtrType { ptrTy = Native { nativeMutability = mut,
+                                     nativeTy = innerty } } ->
+            genWrite acc indexes (MemLoc innerty mut inner')
           -- XXX what should happen for GC pointers?
           _ -> error "Generating dereference of non-pointer value"
     -- For an index, add to the list of indexes and continue.  We
@@ -605,7 +607,11 @@ genStm irmod ctx builder decls valtys typedefs valmap stm =
     -- For globals, the LLVM value is actually a pointer.  Generate a
     -- write to a memory location using the global's value.
     genLValueWrite' acc indexes (Global { globalName = name }) =
-      genWrite acc indexes (MemLoc (getGlobalMutability name) (decls ! name))
+      let
+        loc = MemLoc (getGlobalType name) (getGlobalMutability name)
+                     (decls ! name)
+      in
+        genWrite acc indexes loc
     -- For variables, just call out to the genVarWrite function.
     genLValueWrite' acc indexes (Var { varName = name }) =
       genWrite acc indexes (getVarLocation valmap name)
