@@ -72,6 +72,7 @@ import Data.Graph.Inductive.Graph
 --import Data.Graph.Inductive.Query.DFS
 import Data.Hash
 import Data.Maybe
+import Data.Interval(Intervals)
 import Data.Pos
 import Data.Word
 import IR.Common.Ptr
@@ -136,12 +137,14 @@ data Type =
       -- | The position in source from which this arises.
       ptrPos :: !Pos
     }
-  -- | An integer, possibly signed, with a size
+  -- | An integer, possibly signed, with a size.
   | IntType {
-      -- | Whether or not the int is signed
+      -- | Whether or not the int is signed.
       intSigned :: !Bool,
-      -- | The size of the int in bits
-      intSize ::  !Word,
+      -- | The size of the int in bits.
+      intSize :: !Word,
+      -- | The possible-value intervals for the integer.
+      intIntervals :: Intervals Integer,
       -- | The position in source from which this arises.
       intPos :: !Pos
     }
@@ -514,8 +517,9 @@ instance Hashable Type where
   hash (ArrayType { arrayLen = Just size, arrayElemTy = inner }) =
     hashInt 2 `combine` hash size `combine` hash inner
   hash (PtrType { ptrTy = objtype }) = hashInt 3 `combine` hash objtype
-  hash (IntType { intSigned = signed, intSize = size }) =
-    hashInt 4 `combine` hash signed `combine` hash size
+  hash (IntType { intSigned = signed, intIntervals = intervals,
+                  intSize = size }) =
+    hashInt 4 `combine` hash signed `combine` hash intervals `combine` hash size
   hash (IdType { idName = Typename str }) = hash str
   hash (FloatType { floatSize = size }) = hashInt 5 `combine` hash size
   hash (UnitType {}) = hashInt 6
