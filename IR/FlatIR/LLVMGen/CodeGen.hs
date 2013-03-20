@@ -36,6 +36,7 @@ import IR.FlatIR.LLVMGen.VarAccess(Index(..), Access(..),
 import Prelude hiding (mapM)
 
 import qualified LLVM.Core as LLVM
+import qualified IR.FlatIR.LLVMGen.MemAccess as MemAccess
 import qualified IR.FlatIR.LLVMGen.Types as Types
 import qualified IR.FlatIR.LLVMGen.Utils as Utils
 import qualified IR.FlatIR.LLVMGen.VarAccess as VarAccess
@@ -82,20 +83,21 @@ genExp irmod ctx builder decls valtys typedefs valmap =
     genGEP = VarAccess.genGEP builder
     genExtractValue = VarAccess.genExtractValue builder
     genVarRead = VarAccess.genVarRead builder valmap
+    genLoad = MemAccess.genLoad ctx builder
 
     -- Generate code for getting the address of a given LValue and
     -- return the LLVM value and type.
     genLValueAddr' :: [Index] -> LValue -> IO (LLVM.ValueRef, Type)
     -- For a simple dereference with no indexes, we can just cancel
     -- out the dereference operator
-    genLValueAddr' [] (Deref { derefVal = inner }) =
+    genLValueAddr' [] Deref { derefVal = inner } =
       do
         (DirectAcc inner', ty) <- genExp' inner
         case getActualType ty of
           PtrType {} -> return (inner', ty)
           _ -> error "Wrong value type in dereference"
     -- For dereferences with indexes, generate a getelementptr
-    genLValueAddr' indexes (Deref { derefVal = inner }) =
+    genLValueAddr' indexes Deref { derefVal = inner } =
       do
         (DirectAcc inner', ty) <- genExp' inner
         case getActualType ty of
@@ -187,10 +189,11 @@ genExp irmod ctx builder decls valtys typedefs valmap =
           -- functions
           PtrType { ptrTy = GC { } } ->
             error "Reading GC object fields not implemented"
-          PtrType { ptrTy = Native { nativeTy = innerty } } ->
+          PtrType { ptrTy = Native { nativeMutability = mut,
+                                     nativeTy = innerty } } ->
             do
               addr <- genGEP inner' indexes
-              val <- LLVM.buildLoad builder addr ""
+              val <- genLoad addr mut innerty
               return (DirectAcc val, innerty)
           _ -> error "Wrong value type in dereference"
     -- For an index, add to the list of indexes and continue.  We
@@ -231,8 +234,7 @@ genExp irmod ctx builder decls valtys typedefs valmap =
     genLValueRead' indexes (Global { globalName = name }) =
       do
         addr <- genGEP (decls ! name) indexes
-        val <- LLVM.buildLoad builder addr ""
-        -- XXX set volatile
+        val <- genLoad addr (getGlobalMutability name) (getGlobalType name)
         return (DirectAcc val, getGlobalType name)
     -- For variables, just call out to the genVarRead function.
     genLValueRead' indexes (Var { varName = name }) =
