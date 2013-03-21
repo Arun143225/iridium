@@ -161,31 +161,23 @@ genVarRead ctx builder valmap indexes var =
         _ -> error "Wrong kind of index for a structure location"
 
 -- | This function handles writes to variables without indexes
-genRawVarWrite :: LLVM.BuilderRef -> ValMap -> Access -> Id -> IO ValMap
-genRawVarWrite builder valmap acc var @ (Id name) =
+genRawVarWrite :: LLVM.ContextRef -> LLVM.BuilderRef ->
+                  ValMap -> Access -> Id -> IO ValMap
+genRawVarWrite ctx builder valmap acc var @ (Id name) =
   case getVarLocation valmap var of
     BindLoc _ -> return (Map.insert name (BindLoc (toValue acc)) valmap)
-    loc -> genRawWrite builder valmap acc loc
+    loc -> genRawWrite ctx builder valmap acc loc
 
 -- | This function handles writes to non-variables without indexes
-genRawWrite :: LLVM.BuilderRef -> ValMap -> Access -> Location -> IO ValMap
+genRawWrite :: LLVM.ContextRef -> LLVM.BuilderRef -> ValMap ->
+               Access -> Location -> IO ValMap
 -- We've got a value and a memory location.  Generate a store.
-genRawWrite builder valmap acc (MemLoc _ Volatile addr) =
+genRawWrite ctx builder valmap acc (MemLoc ty mut addr) =
   do
-    store <- LLVM.buildStore builder (toValue acc) addr
-    LLVM.setVolatile store True
-    return valmap
-genRawWrite builder valmap acc (MemLoc _ VolatileOnce addr) =
-  do
-    store <- LLVM.buildStore builder (toValue acc) addr
-    LLVM.setVolatile store True
-    return valmap
-genRawWrite builder valmap acc (MemLoc _ _ addr) =
-  do
-    _ <- LLVM.buildStore builder (toValue acc) addr
+    genStore ctx builder (toValue acc) addr mut ty
     return valmap
 -- For structures, we end up recursing.
-genRawWrite builder valmap acc (StructLoc fields) =
+genRawWrite ctx builder valmap acc (StructLoc fields) =
   case acc of
     -- We've got a value (which ought to have a structure type),
     -- and a local variable that's a structure.  Go through and
@@ -195,7 +187,7 @@ genRawWrite builder valmap acc (StructLoc fields) =
         foldfun valmap' (Fieldname fname, var) =
           do
             val' <- LLVM.buildExtractValue builder val fname ""
-            genRawVarWrite builder valmap' (DirectAcc val') (Id var)
+            genRawVarWrite ctx builder valmap' (DirectAcc val') (Id var)
       in do
         foldlM foldfun valmap (assocs fields)
     -- We've got a structure access and a structure location, which
@@ -204,58 +196,46 @@ genRawWrite builder valmap acc (StructLoc fields) =
     StructAcc accfields ->
       let
         foldfun valmap' (acc', var) =
-          genRawVarWrite builder valmap' acc' (Id var)
+          genRawVarWrite ctx builder valmap' acc' (Id var)
         fieldlist = zip (elems accfields) (elems fields)
       in
         foldlM foldfun valmap fieldlist
-genRawWrite _ _ _ (BindLoc _) = error "genRawWrite can't handle BindLocs"
+genRawWrite _ _ _ _ (BindLoc _) = error "genRawWrite can't handle BindLocs"
 
 -- | Take an access, a non-variable location, and a list of indexes, and
 -- do the work to write to the location.  This involves many possible
 -- cases.
-genWrite :: LLVM.BuilderRef -> ValMap -> Access -> [Index] -> Location ->
-            IO ValMap
+genWrite :: LLVM.ContextRef -> LLVM.BuilderRef -> ValMap ->
+            Access -> [Index] -> Location -> IO ValMap
 -- This case should never happen
-genWrite _ _ _ _ (BindLoc _) = error "genWrite can't handle BindLocs"
+genWrite _ _ _ _ _ (BindLoc _) = error "genWrite can't handle BindLocs"
 -- For no index cases, pass off to genRawWrite
-genWrite builder valmap acc [] loc =
-  genRawWrite builder valmap acc loc
+genWrite ctx builder valmap acc [] loc =
+  genRawWrite ctx builder valmap acc loc
 -- We've got a value and a memory location.  Generate a GEP and store
 -- the value.
-genWrite builder valmap acc indexes (MemLoc _ Volatile mem) =
+genWrite ctx builder valmap acc indexes (MemLoc ty mut mem) =
   do
     addr <- LLVM.buildGEP builder mem (map toValue indexes) ""
-    store <- LLVM.buildStore builder (toValue acc) addr
-    LLVM.setVolatile store True
-    return valmap
-genWrite builder valmap acc indexes (MemLoc _ VolatileOnce mem) =
-  do
-    addr <- LLVM.buildGEP builder mem (map toValue indexes) ""
-    store <- LLVM.buildStore builder (toValue acc) addr
-    LLVM.setVolatile store True
-    return valmap
-genWrite builder valmap acc indexes (MemLoc _ _ mem) =
-  do
-    addr <- LLVM.buildGEP builder mem (map toValue indexes) ""
-    _ <- LLVM.buildStore builder (toValue acc) addr
+    genStore ctx builder (toValue acc) addr mut ty
     return valmap
 -- For structures, we recurse to strip away the fields
-genWrite builder valmap acc (FieldInd field : indexes) (StructLoc fields) =
-  genVarWrite builder valmap acc indexes (Id (fields ! field))
+genWrite ctx builder valmap acc (FieldInd field : indexes) (StructLoc fields) =
+  genVarWrite ctx builder valmap acc indexes (Id (fields ! field))
 -- Any other kind of index is an error condition
-genWrite _ _ _ _ (StructLoc _) = error "Bad indexes in assignment to variable"
+genWrite _ _ _ _ _ (StructLoc _) = error "Bad indexes in assignment to variable"
 
 -- | Take an access, a variable name, and a list of indexes and do the
 -- work to write to the location.
-genVarWrite :: LLVM.BuilderRef -> ValMap -> Access -> [Index] -> Id ->
-               IO ValMap
-genVarWrite builder valmap acc indexes var =
+genVarWrite :: LLVM.ContextRef -> LLVM.BuilderRef -> ValMap ->
+               Access -> [Index] -> Id -> IO ValMap
+genVarWrite ctx builder valmap acc indexes var =
   case getVarLocation valmap var of
     BindLoc _ ->
       case indexes of
-        [] -> genRawVarWrite builder valmap acc var
+        [] -> genRawVarWrite ctx builder valmap acc var
         _ -> error "Extra indexes in write to variable"
-    loc -> genWrite builder valmap acc indexes loc
+    loc -> genWrite ctx builder valmap acc indexes loc
 
 instance LLVMValue Index where
   toValue (FieldInd fname) = toValue fname

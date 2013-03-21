@@ -570,7 +570,7 @@ genStm :: Graph gr =>
 genStm irmod ctx builder decls valtys typedefs valmap stm =
   let
     genExp' = genExp irmod ctx builder decls valtys typedefs valmap
-    genWrite = VarAccess.genWrite builder valmap
+    genWrite = VarAccess.genWrite ctx builder valmap
     getGlobalMutability = Utils.getGlobalMutability irmod
     getGlobalType = Utils.getGlobalType irmod
 
