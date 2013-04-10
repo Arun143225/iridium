@@ -25,6 +25,7 @@ Library
                         IR.FlatIR.LLVMGen
                         IR.FlatIR.LLVMGen.CodeGen,
                         IR.FlatIR.LLVMGen.ConstValue,
+                        IR.FlatIR.LLVMGen.Dwarf,
                         IR.FlatIR.LLVMGen.GCAccessors,
                         IR.FlatIR.LLVMGen.GCHeaders,
                         IR.FlatIR.LLVMGen.Globals,
