@@ -70,7 +70,7 @@ Specific things to be done:
 
    5) Output TBAA data.
 
-   6) Add possible-value data to integer types
+   6) Add possible-value data to integer types (sort of done)
 
    7) Link GC headers and GC read/write/addr functions into metadata directly
 
