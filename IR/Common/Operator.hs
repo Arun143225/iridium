@@ -22,7 +22,7 @@ module IR.Common.Operator(
        Unop(..)
        ) where
 
-import Data.Hash
+import Data.Hashable
 import Text.Format
 
 -- | Binary operators.  The Arithmetic operators exist for matched
@@ -33,49 +33,17 @@ data Binop =
   | And | Or | Xor | Shl | Shr | Eq | Neq | Ge | Le | Gt | Lt
   | FOEq | FONeq | FOGt | FOGe | FOLt | FOLe
   | FUEq | FUNeq | FUGt | FUGe | FULt | FULe
-    deriving (Eq, Ord)
+    deriving (Eq, Ord, Enum)
 
 -- | Unary operators
 data Unop = Neg | NegNW | Not
-    deriving (Eq, Ord)
+    deriving (Eq, Ord, Enum)
 
 instance Hashable Unop where
-  hash Neg = hashInt 1
-  hash NegNW = hashInt 2
-  hash Not = hashInt 3
+  hashWithSalt s u = s `hashWithSalt` fromEnum u
 
 instance Hashable Binop where
-  hash Add = hashInt 1
-  hash AddNW = hashInt 2
-  hash Sub = hashInt 3
-  hash SubNW = hashInt 4
-  hash Mul = hashInt 5
-  hash MulNW = hashInt 6
-  hash Div = hashInt 7
-  hash Mod = hashInt 8
-  hash Shl = hashInt 9
-  hash Shr = hashInt 10
-  hash And = hashInt 11
-  hash Or = hashInt 12
-  hash Xor = hashInt 13
-  hash Eq = hashInt 14
-  hash Neq = hashInt 15
-  hash Ge = hashInt 16
-  hash Le = hashInt 17
-  hash Gt = hashInt 18
-  hash Lt = hashInt 19
-  hash FOEq = hashInt 20
-  hash FONeq = hashInt 21
-  hash FOGe = hashInt 22
-  hash FOLe = hashInt 23
-  hash FOGt = hashInt 24
-  hash FOLt = hashInt 25
-  hash FUEq = hashInt 26
-  hash FUNeq = hashInt 27
-  hash FUGe = hashInt 28
-  hash FULe = hashInt 29
-  hash FUGt = hashInt 30
-  hash FULt = hashInt 31
+  hashWithSalt s b = s `hashWithSalt` fromEnum b
 
 instance Show Unop where
   show Neg = "neg"

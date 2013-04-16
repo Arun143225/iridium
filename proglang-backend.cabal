@@ -17,7 +17,7 @@ Build-type:          Simple
 Cabal-version:       >= 1.9.2
 
 Library
-  build-depends:        base, mtl, data-hash, pretty, fgl, array,
+  build-depends:        base, mtl, hashable, pretty, fgl, array,
                         bitarray, proglang-util, llvm-bindings, containers
   other-modules:        IR.Common.Ptr,
                         IR.Common.Operator,

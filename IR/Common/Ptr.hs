@@ -32,8 +32,8 @@ module IR.Common.Ptr(
        mergeMutability
        ) where
 
-import Data.Hash
-import Data.Pos
+import Data.Hashable
+import Data.Word
 import Text.Format
 
 -- | The type of object pointed to by a pointer
@@ -70,7 +70,7 @@ data Mobility =
   -- | The object's address cannot change during execution.  Use to
   -- allocate buffers for IO, or objects for foreign calls.
   | Immobile
-    deriving (Eq, Ord)
+    deriving (Eq, Ord, Enum)
 
 -- | Indicates the class of pointers.  This is relevant only to
 -- pointers to grabage collected objects.
@@ -93,7 +93,7 @@ data PtrClass =
   -- program code, but will prevent an object's deletion during a
   -- collection cycle.
   | Phantom
-    deriving (Eq, Ord)
+    deriving (Eq, Ord, Enum)
 
 -- | Mutability of fields and objects.  Mutability, and particular
 -- variants thereof are of paramount importance during garbage
@@ -111,7 +111,7 @@ data Mutability =
   | Volatile
   -- | Like WriteOnce, but also volatile.
   | VolatileOnce
-    deriving (Eq, Ord)
+    deriving (Eq, Ord, Enum)
 
 -- | Given the mutability of a defining struct and a field, decide
 -- what the actual mutability is.
@@ -140,30 +140,17 @@ mergeMutability _ WriteOnce = WriteOnce
 -- Mutable carries no information
 mergeMutability Mutable Mutable = Mutable
 
-instance Hashable Mobility where
-  hash Mobile = hashInt 1
-  hash Immobile = hashInt 2
-
-instance Hashable PtrClass where
-  hash Strong = hashInt 1
-  hash Soft = hashInt 2
-  hash Weak = hashInt 3
-  hash Finalizer = hashInt 4
-  hash Phantom = hashInt 5
-
-instance Hashable Mutability where
-  hash Immutable = hashInt 1
-  hash Mutable = hashInt 2
-  hash WriteOnce = hashInt 3
-  hash Volatile = hashInt 4
-  hash VolatileOnce = hashInt 5
+instance Hashable Mobility where hashWithSalt s m = s `hashWithSalt` fromEnum m
+instance Hashable PtrClass where hashWithSalt s p = s `hashWithSalt` fromEnum p
+instance Hashable Mutability where hashWithSalt s m = s `hashWithSalt` fromEnum m
 
 instance (Hashable gctype, Hashable nativetype) =>
          Hashable (Ptr gctype nativetype) where
-  hash (GC { gcClass = ptrclass, gcTy = ty, gcMutability = mut }) =
-    hashInt 1 `combine` hash ptrclass `combine` hash ty `combine` hash mut
-  hash (Native { nativeTy = ty, nativeMutability = mut }) =
-    hashInt 2 `combine` hash ty `combine` hash mut
+  hashWithSalt s GC { gcClass = ptrclass, gcTy = ty, gcMutability = mut } =
+    s `hashWithSalt` (1 :: Word) `hashWithSalt`
+    ptrclass `hashWithSalt`ty `hashWithSalt` mut
+  hashWithSalt s Native { nativeTy = ty, nativeMutability = mut } =
+    s `hashWithSalt` (1 :: Word) `hashWithSalt` ty `hashWithSalt` mut
 
 instance Show Mobility where
   show Mobile = "mobile"

@@ -68,9 +68,9 @@ module IR.FlatIR.Syntax(
        ) where
 
 import Data.Array
-import Data.Graph.Inductive.Graph
+import Data.Graph.Inductive.Graph(Node)
 --import Data.Graph.Inductive.Query.DFS
-import Data.Hash
+import Data.Hashable
 import Data.Maybe
 import Data.Interval(Intervals)
 import Data.Pos
@@ -164,7 +164,6 @@ data Type =
     }
   -- | The unit type, equivalent to SML unit and C/Java void
   | UnitType !Pos
-    deriving (Ord, Eq)
 
 -- | A label, indexes blocks
 newtype Label = Label Node
@@ -221,7 +220,6 @@ data Transfer =
   -- | An unreachable instruction, usually following a call with no
   -- return
   | Unreachable !Pos
-    deriving (Ord, Eq)
 
 -- | An assignable value
 data LValue =
@@ -265,7 +263,6 @@ data LValue =
       -- | The position in source from which this arises.
       globalPos :: !Pos
     }
-    deriving (Ord, Eq)
 
 -- | An expression
 data Exp =
@@ -357,8 +354,7 @@ data Exp =
       numConstPos :: !Pos
     }
   -- | An LValue
-  | LValue !LValue 
-    deriving (Ord, Eq)
+  | LValue !LValue
 
 -- | A statement.  Represents an effectful action.
 data Stm =
@@ -373,7 +369,6 @@ data Stm =
     }
   -- | Execute an expression
   | Do !Exp
-    deriving (Ord, Eq)
 
 -- | A basic block
 data Block =
@@ -385,7 +380,6 @@ data Block =
       -- | The position in source from which this arises.
       blockPos :: !Pos
     }
-    deriving (Ord, Eq)
 
 -- There is no straightforward ordering, equality, or hashing on the
 -- remaining types.
@@ -451,136 +445,406 @@ data Module gr =
       modPos :: !Pos
     }
 
+instance Eq Type where
+  FuncType { funcTyRetTy = retty1, funcTyArgTys = params1 } ==
+    FuncType { funcTyRetTy = retty2, funcTyArgTys = params2 } =
+    retty1 == retty2 && params1 == params2
+  StructType { structPacked = packed1, structFields = fields1 } ==
+    StructType { structPacked = packed2, structFields = fields2 } =
+    packed1 == packed2 && fields1 == fields2
+  ArrayType { arrayLen = len1, arrayElemTy = inner1 } ==
+    ArrayType { arrayLen = len2, arrayElemTy = inner2 } =
+    len1 == len2 && inner1 == inner2
+  PtrType { ptrTy = objtype1 } == PtrType { ptrTy = objtype2 } =
+    objtype1 == objtype2
+  IntType { intSigned = signed1, intIntervals = intervals1, intSize = size1 } ==
+    IntType { intSigned = signed2, intIntervals = intervals2, intSize = size2 } =
+    signed1 == signed2 && size1 == size2 && intervals1 == intervals2
+  IdType { idName = name1 } == IdType { idName = name2 } = name1 == name2
+  FloatType { floatSize = size1 } == FloatType { floatSize = size2 } =
+    size1 == size2
+  (UnitType _) == (UnitType _) = True
+  _ == _ = False
+
+instance Eq LValue where
+  Index { idxVal = val1, idxIndex = idx1 } ==
+    Index { idxVal = val2, idxIndex = idx2 } = val1 == val2 && idx1 == idx2
+  Field { fieldVal = val1, fieldName = name1 } ==
+    Field { fieldVal = val2, fieldName = name2 } = val1 == val2 && name1 == name2
+  Deref { derefVal = val1 } == Deref { derefVal = val2 } = val1 == val2
+  Var { varName = name1 } == Var { varName = name2 } = name1 == name2
+  Global { globalName = name1 } == Global { globalName = name2 } =
+    name1 == name2
+  _ == _ = False
+
+instance Eq Exp where
+  Binop { binopOp = op1, binopLeft = left1, binopRight = right1 } ==
+    Binop { binopOp = op2, binopLeft = left2, binopRight = right2 } =
+    op1 == op2 && left1 == left2 && right1 == right2
+  Call { callFunc = func1, callArgs = args1 } ==
+    Call { callFunc = func2, callArgs = args2 } =
+    func1 == func2 && args1 == args2
+  Unop { unopOp = op1, unopVal = val1 } ==
+    Unop { unopOp = op2, unopVal = val2 } =
+    op1 == op2 && val1 == val2
+  Conv { convTy = ty1, convVal = val1 } ==
+    Conv { convTy = ty2, convVal = val2 } =
+    ty1 == ty2 && val1 == val2
+  Cast { castTy = ty1, castVal = val1 } ==
+    Cast { castTy = ty2, castVal = val2 } =
+    ty1 == ty2 && val1 == val2
+  AddrOf { addrofVal = val1 } == AddrOf { addrofVal = val2 } = val1 == val2
+  StructConst { structConstTy = ty1, structConstFields = fields1 } ==
+    StructConst { structConstTy = ty2, structConstFields = fields2 } =
+    ty1 == ty2 && fields1 == fields2
+  ArrayConst { arrayConstTy = ty1, arrayConstVals = vals1 } ==
+    ArrayConst { arrayConstTy = ty2, arrayConstVals = vals2 } =
+    ty1 == ty2 && vals1 == vals2
+  NumConst { numConstTy = ty1, numConstVal = val1 } ==
+    NumConst { numConstTy = ty2, numConstVal = val2 } =
+    ty1 == ty2 && val1 == val2
+  (LValue lval1) == (LValue lval2) = lval1 == lval2
+  _ == _ = False
+
+instance Eq Stm where
+  Move { moveSrc = src1, moveDst = dst1 } ==
+    Move { moveSrc = src2, moveDst = dst2 } = src1 == src2 && dst1 == dst2
+  (Do exp1) == (Do exp2) = exp1 == exp2
+  _ == _ = False
+
+instance Eq Transfer where
+  Goto { gotoLabel = label1 } == Goto { gotoLabel = label2 } = label1 == label2
+  Case { caseVal = val1, caseCases = cases1, caseDefault = def1 } ==
+    Case { caseVal = val2, caseCases = cases2, caseDefault = def2 } =
+    val1 == val2 && cases1 == cases2 && def1 == def2
+  Ret { retVal = ret1 } == Ret { retVal = ret2 } = ret1 == ret2
+  Unreachable _ == Unreachable _ = True
+  _ == _ = False
+
+instance Eq Block where
+  Block { blockStms = stms1, blockXfer = xfer1 } ==
+    Block { blockStms = stms2, blockXfer = xfer2 } =
+    stms1 == stms2 && xfer1 == xfer2
+
+instance Ord Type where
+  compare FuncType { funcTyRetTy = retty1, funcTyArgTys = params1 }
+          FuncType { funcTyRetTy = retty2, funcTyArgTys = params2 } =
+    case compare retty1 retty2 of
+      EQ -> compare params1 params2
+      out -> out
+  compare FuncType {} _ = LT
+  compare _ FuncType {} = GT
+  compare StructType { structPacked = packed1, structFields = fields1 }
+          StructType { structPacked = packed2, structFields = fields2 } =
+    case compare packed1 packed2 of
+      EQ -> compare fields1 fields2
+      out -> out
+  compare StructType {} _ = LT
+  compare _ StructType {} = GT
+  compare ArrayType { arrayLen = len1, arrayElemTy = inner1 }
+          ArrayType { arrayLen = len2, arrayElemTy = inner2 } =
+    case compare len1 len2 of
+      EQ -> compare inner1 inner2
+      out -> out
+  compare ArrayType {} _ = LT
+  compare _ ArrayType {} = GT
+  compare PtrType { ptrTy = objtype1 } PtrType { ptrTy = objtype2 } =
+    compare objtype1 objtype2
+  compare PtrType {} _ = LT
+  compare _ PtrType {} = GT
+  compare IntType { intSigned = signed1, intSize = size1,
+                    intIntervals = intervals1 }
+          IntType { intSigned = signed2, intSize = size2,
+                    intIntervals = intervals2 } =
+    case compare signed1 signed2 of
+      EQ -> case compare size1 size2 of
+        EQ -> compare intervals1 intervals2
+        out -> out
+      out -> out
+  compare IntType {} _ = LT
+  compare _ IntType {} = GT
+  compare IdType { idName = name1 } IdType { idName = name2 } =
+    compare name1 name2
+  compare IdType {} _ = LT
+  compare _ IdType {} = GT
+  compare FloatType { floatSize = size1 } FloatType { floatSize = size2 } =
+    compare size1 size2
+  compare FloatType {} _ = LT
+  compare _ FloatType {} = GT
+  compare (UnitType _) (UnitType _) = EQ
+
+instance Ord LValue where
+  compare Index { idxVal = val1, idxIndex = idx1 }
+          Index { idxVal = val2, idxIndex = idx2 } =
+    case compare idx1 idx2 of
+      EQ -> compare val1 val2
+      out -> out
+  compare Index {} _ = LT
+  compare _ Index {} = GT
+  compare Field { fieldVal = val1, fieldName = name1 }
+          Field { fieldVal = val2, fieldName = name2 } =
+    case compare name1 name2 of
+      EQ -> compare val1 val2
+      out -> out
+  compare Field {} _ = LT
+  compare _ Field {} = GT
+  compare Deref { derefVal = val1 } Deref { derefVal = val2 } =
+    compare val1 val2
+  compare Deref {} _ = LT
+  compare _ Deref {} = GT
+  compare Var { varName = name1 } Var { varName = name2 } = compare name1 name2
+  compare Var {} _ = LT
+  compare _ Var {} = GT
+  compare Global { globalName = name1 } Global { globalName = name2 } =
+    compare name1 name2
+
+instance Ord Exp where
+  compare (GCAlloc _ _ _) _ = error "GCAlloc is going away"
+  compare _ (GCAlloc _ _ _) = error "GCAlloc is going away"
+  compare Binop { binopOp = op1, binopLeft = left1, binopRight = right1 }
+          Binop { binopOp = op2, binopLeft = left2, binopRight = right2 } =
+    case compare op1 op2 of
+      EQ -> case compare left1 left2 of
+        EQ ->  compare right1 right2
+        out -> out
+      out -> out
+  compare Binop {} _ = LT
+  compare _ Binop {} = GT
+  compare Call { callFunc = func1, callArgs = args1 }
+          Call { callFunc = func2, callArgs = args2 } =
+    case compare func1 func2 of
+      EQ -> compare args1 args2
+      out -> out
+  compare Call {} _ = LT
+  compare _ Call {} = GT
+  compare Unop { unopOp = op1, unopVal = val1 }
+          Unop { unopOp = op2, unopVal = val2 } =
+    case compare op1 op2 of
+      EQ -> compare val1 val2
+      out -> out
+  compare Unop {} _ = LT
+  compare _ Unop {} = GT
+  compare Conv { convTy = ty1, convVal = val1 }
+          Conv { convTy = ty2, convVal = val2 } =
+    case compare ty1 ty2 of
+      EQ -> compare val1 val2
+      out -> out
+  compare Conv {} _ = LT
+  compare _ Conv {} = GT
+  compare Cast { castTy = ty1, castVal = val1 }
+          Cast { castTy = ty2, castVal = val2 } =
+    case compare ty1 ty2 of
+      EQ -> compare val1 val2
+      out -> out
+  compare Cast {} _ = LT
+  compare _ Cast {} = GT
+  compare AddrOf { addrofVal = val1 } AddrOf { addrofVal = val2 } =
+    compare val1 val2
+  compare AddrOf {} _ = LT
+  compare _ AddrOf {} = GT
+  compare StructConst { structConstTy = ty1, structConstFields = fields1 }
+          StructConst { structConstTy = ty2, structConstFields = fields2 } =
+    case compare ty1 ty2 of
+      EQ -> compare fields1 fields2
+      out -> out
+  compare StructConst {} _ = LT
+  compare _ StructConst {} = GT
+  compare ArrayConst { arrayConstTy = ty1, arrayConstVals = vals1 }
+          ArrayConst { arrayConstTy = ty2, arrayConstVals = vals2 } =
+    case compare ty1 ty2 of
+      EQ -> compare vals1 vals2
+      out -> out
+  compare ArrayConst {} _ = LT
+  compare _ ArrayConst {} = GT
+  compare NumConst { numConstTy = ty1, numConstVal = val1 }
+          NumConst { numConstTy = ty2, numConstVal = val2 } =
+    case compare ty1 ty2 of
+      EQ -> compare val1 val2
+      out -> out
+  compare NumConst {} _ = LT
+  compare _ NumConst {} = GT
+  compare (LValue lval1) (LValue lval2) = compare lval1 lval2
+
+instance Ord Stm where
+  compare Move { moveSrc = src1, moveDst = dst1 }
+          Move { moveSrc = src2, moveDst = dst2 } =
+    case compare src1 src2 of
+      EQ -> compare dst1 dst2
+      out -> out
+  compare (Move {}) _ = LT
+  compare _ (Move {}) = GT
+  compare (Do exp1) (Do exp2) = compare exp1 exp2
+
+instance Ord Transfer where
+  compare Goto { gotoLabel = label1 } Goto { gotoLabel = label2 } =
+    compare label1 label2
+  compare Goto {} _ = LT
+  compare _ Goto {} = GT
+  compare Case { caseVal = val1, caseCases = cases1, caseDefault = def1 }
+          Case { caseVal = val2, caseCases = cases2, caseDefault = def2 } =
+    case compare val1 val2 of
+      EQ -> case compare def1 def2 of
+        EQ -> compare cases1 cases2
+        out -> out
+      out -> out
+  compare Case {} _ = LT
+  compare _ Case {} = GT
+  compare Ret { retVal = ret1 } Ret { retVal = ret2 } = compare ret1 ret2
+  compare Ret {} _ = LT
+  compare _ Ret {} = GT
+  compare (Unreachable _) (Unreachable _) = EQ
+
+instance Ord Block where
+  compare Block { blockStms = stms1, blockXfer = xfer1 }
+          Block { blockStms = stms2, blockXfer = xfer2 } =
+    case compare xfer1 xfer2 of
+      EQ -> compare stms1 stms2
+      out -> out
+
 instance Position Type where
-  pos (FuncType { funcTyPos = p }) = p
-  pos (StructType { structPos = p }) = p
-  pos (ArrayType { arrayPos = p }) = p
-  pos (PtrType { ptrPos = p }) = p
-  pos (IntType { intPos = p }) = p
-  pos (IdType { idPos = p }) = p
-  pos (FloatType { floatPos = p }) = p
+  pos FuncType { funcTyPos = p } = p
+  pos StructType { structPos = p } = p
+  pos ArrayType { arrayPos = p } = p
+  pos PtrType { ptrPos = p } = p
+  pos IntType { intPos = p } = p
+  pos IdType { idPos = p } = p
+  pos FloatType { floatPos = p } = p
   pos (UnitType p) = p
 
 instance Position Exp where
-  pos (Binop { binopPos = p }) = p
-  pos (Call { callPos = p }) = p
-  pos (Conv { convPos = p }) = p
-  pos (Cast { castPos = p }) = p
-  pos (Unop { unopPos = p }) = p
-  pos (AddrOf { addrofPos = p }) = p
-  pos (StructConst { structConstPos = p }) = p
-  pos (ArrayConst { arrayConstPos = p }) = p
-  pos (NumConst { numConstPos = p }) = p
+  pos Binop { binopPos = p } = p
+  pos Call { callPos = p } = p
+  pos Conv { convPos = p } = p
+  pos Cast { castPos = p } = p
+  pos Unop { unopPos = p } = p
+  pos AddrOf { addrofPos = p } = p
+  pos StructConst { structConstPos = p } = p
+  pos ArrayConst { arrayConstPos = p } = p
+  pos NumConst { numConstPos = p } = p
   pos (LValue l) = pos l
   pos (GCAlloc _ _ _) = error "GCAlloc is going away"
 
 instance Position LValue where
-  pos (Index { idxPos = p }) = p
-  pos (Field { fieldPos = p }) = p
-  pos (Deref { derefPos = p }) = p
-  pos (Var { varPos = p }) = p
-  pos (Global { globalPos = p }) = p
+  pos Index { idxPos = p } = p
+  pos Field { fieldPos = p } = p
+  pos Deref { derefPos = p } = p
+  pos Var { varPos = p } = p
+  pos Global { globalPos = p } = p
 
 instance Position Transfer where
-  pos (Goto { gotoPos = p }) = p
-  pos (Case { casePos = p }) = p
-  pos (Ret { retPos = p }) = p
+  pos Goto { gotoPos = p } = p
+  pos Case { casePos = p } = p
+  pos Ret { retPos = p } = p
   pos (Unreachable p) = p
 
 instance Position Stm where
-  pos (Move { movePos = p }) = p
+  pos Move { movePos = p } = p
   pos (Do expr) = pos expr
 
 instance Position Block where
-  pos (Block { blockPos = p }) = p
+  pos Block { blockPos = p } = p
 
 instance Position (Global gr) where
-  pos (Function { funcPos = p }) = p
-  pos (GlobalVar { gvarPos = p }) = p
+  pos Function { funcPos = p } = p
+  pos GlobalVar { gvarPos = p } = p
 
 instance Position (Module gr) where
-  pos (Module { modPos = p }) = p
+  pos Module { modPos = p } = p
 
 instance Hashable Typename where
-  hash (Typename n) = hash n
+  hashWithSalt s (Typename n) = s `hashWithSalt` n
 
 instance Hashable GCHeader where
-  hash (GCHeader n) = hash n
+  hashWithSalt s (GCHeader n) = s `hashWithSalt` n
 
 instance Hashable Type where
-  hash (FuncType { funcTyRetTy = retty, funcTyArgTys = params }) =
-    hashInt 0 `combine` hash retty `combine` hash params
-  hash (StructType { structPacked = packed, structFields = fields }) =
-    hashInt 1 `combine` hash packed `combine` hashFoldable fields
-  hash (ArrayType { arrayLen = Nothing, arrayElemTy = inner }) =
-    hashInt 2 `combine` hashInt 0 `combine` hash inner
-  hash (ArrayType { arrayLen = Just size, arrayElemTy = inner }) =
-    hashInt 2 `combine` hash size `combine` hash inner
-  hash (PtrType { ptrTy = objtype }) = hashInt 3 `combine` hash objtype
-  hash (IntType { intSigned = signed, intIntervals = intervals,
-                  intSize = size }) =
-    hashInt 4 `combine` hash signed `combine` hash intervals `combine` hash size
-  hash (IdType { idName = Typename str }) = hash str
-  hash (FloatType { floatSize = size }) = hashInt 5 `combine` hash size
-  hash (UnitType {}) = hashInt 6
+  hashWithSalt s FuncType { funcTyRetTy = retty, funcTyArgTys = params } =
+    s `hashWithSalt` (0 :: Word) `hashWithSalt` retty `hashWithSalt` params
+  hashWithSalt s StructType { structPacked = packed, structFields = fields } =
+    s `hashWithSalt` (1 :: Word) `hashWithSalt`
+      packed `hashWithSalt` (elems fields)
+  hashWithSalt s ArrayType { arrayLen = Nothing, arrayElemTy = inner } =
+    s `hashWithSalt` (2 :: Word) `hashWithSalt` (0 :: Word) `hashWithSalt` inner
+  hashWithSalt s ArrayType { arrayLen = Just size, arrayElemTy = inner } =
+    s `hashWithSalt` (2 :: Word) `hashWithSalt` size `hashWithSalt` inner
+  hashWithSalt s PtrType { ptrTy = objtype } =
+    s `hashWithSalt` (3 :: Word) `hashWithSalt` objtype
+  hashWithSalt s IntType { intSigned = signed, intIntervals = intervals,
+                           intSize = size } =
+    s `hashWithSalt` (4 :: Word) `hashWithSalt` signed `hashWithSalt`
+      intervals `hashWithSalt` size
+  hashWithSalt s IdType { idName = Typename str } =
+    s `hashWithSalt` (5 :: Word) `hashWithSalt` str
+  hashWithSalt s FloatType { floatSize = size } =
+    s `hashWithSalt` (6 :: Word) `hashWithSalt` size
+  hashWithSalt s UnitType {} = s `hashWithSalt` (7 :: Word)
 
 instance Hashable Transfer where
-  hash (Goto { gotoLabel = label }) = hashInt 1 `combine` hash label
-  hash (Case { caseVal = val, caseCases = cases, caseDefault = def }) =
-    hashInt 2 `combine` hash val `combine` hash cases `combine` hash def
-  hash (Ret { retVal = val }) = hashInt 3 `combine` hash val
-  hash (Unreachable _) = hashInt 4
+  hashWithSalt s Goto { gotoLabel = label } =
+    s `hashWithSalt` (1 :: Word) `hashWithSalt` label
+  hashWithSalt s Case { caseVal = val, caseCases = cases, caseDefault = def } =
+    s `hashWithSalt` (2 :: Word) `hashWithSalt`
+      val `hashWithSalt` cases `hashWithSalt` def
+  hashWithSalt s Ret { retVal = val } =
+    s `hashWithSalt` (3 :: Word) `hashWithSalt` val
+  hashWithSalt s (Unreachable _) = s `hashWithSalt` (4 :: Word)
 
 instance Hashable LValue where
-  hash (Index { idxVal = val, idxIndex = idx }) =
-    hashInt 1 `combine` hash val `combine` hash idx
-  hash (Field { fieldVal = val, fieldName = name }) =
-    hashInt 2 `combine` hash val `combine` hash name
-  hash (Deref { derefVal = val }) = hashInt 3 `combine` hash val
-  hash (Var { varName = name }) = hashInt 4 `combine` hash name
-  hash (Global { globalName = name }) = hashInt 5 `combine` hash name
+  hashWithSalt s Index { idxVal = val, idxIndex = idx } =
+    s `hashWithSalt` (1 :: Word) `hashWithSalt` val `hashWithSalt` idx
+  hashWithSalt s Field { fieldVal = val, fieldName = name } =
+    s `hashWithSalt` (2 :: Word) `hashWithSalt` val `hashWithSalt` name
+  hashWithSalt s Deref { derefVal = val } =
+    s `hashWithSalt` (3 :: Word) `hashWithSalt`val
+  hashWithSalt s Var { varName = name } =
+    s `hashWithSalt` (4 :: Word) `hashWithSalt` name
+  hashWithSalt s Global { globalName = name } =
+    s `hashWithSalt` (5 :: Word) `hashWithSalt` name
 
 instance Hashable Exp where
-  hash (Binop { binopOp = op, binopLeft = left, binopRight = right }) =
-    hashInt 1 `combine` hash op `combine` hash left `combine` hash right
-  hash (Call { callFunc = func, callArgs = args }) =
-    hashInt 2 `combine` hash func `combine` hash args
-  hash (Unop { unopOp = op, unopVal = val }) =
-    hashInt 3 `combine` hash op `combine` hash val
-  hash (Conv { convTy = ty, convVal = val }) =
-    hashInt 4 `combine` hash ty `combine` hash val
-  hash (Cast { castTy = ty, castVal = val }) =
-    hashInt 5 `combine` hash ty `combine` hash val
-  hash (AddrOf { addrofVal = val }) = hashInt 6 `combine` hash val
-  hash (StructConst { structConstTy = ty, structConstFields = fields }) =
-    foldr combine (hashInt 7 `combine` hash ty) (map hash (elems fields))
-  hash (ArrayConst { arrayConstTy = ty, arrayConstVals = vals }) =
-    hashInt 8 `combine` hash ty `combine` hash vals
-  hash (NumConst { numConstTy = ty, numConstVal = val }) =
-    hashInt 9 `combine` hash ty `combine` hash val
-  hash (LValue lval) = hashInt 10 `combine` hash lval
-  hash (GCAlloc _ _ _) = error "GCAlloc is going away"
+  hashWithSalt s Binop { binopOp = op, binopLeft = left, binopRight = right } =
+    s `hashWithSalt` (1 :: Word) `hashWithSalt`
+    op `hashWithSalt` left `hashWithSalt` right
+  hashWithSalt s Call { callFunc = func, callArgs = args } =
+    s `hashWithSalt` (2 :: Word) `hashWithSalt` func `hashWithSalt` args
+  hashWithSalt s Unop { unopOp = op, unopVal = val } =
+    s `hashWithSalt` (3 :: Word) `hashWithSalt` op `hashWithSalt` val
+  hashWithSalt s Conv { convTy = ty, convVal = val } =
+    s `hashWithSalt` (4 :: Word) `hashWithSalt` ty `hashWithSalt` val
+  hashWithSalt s Cast { castTy = ty, castVal = val } =
+    s `hashWithSalt` (5 :: Word) `hashWithSalt` ty `hashWithSalt` val
+  hashWithSalt s AddrOf { addrofVal = val } =
+    s `hashWithSalt` (6 :: Word) `hashWithSalt` val
+  hashWithSalt s StructConst { structConstTy = ty, structConstFields = fields } =
+    s `hashWithSalt` (7 :: Word) `hashWithSalt` ty `hashWithSalt` (elems fields)
+  hashWithSalt s ArrayConst { arrayConstTy = ty, arrayConstVals = vals } =
+    s `hashWithSalt` (8 :: Word) `hashWithSalt` ty `hashWithSalt` vals
+  hashWithSalt s NumConst { numConstTy = ty, numConstVal = val } =
+    s `hashWithSalt` (9 :: Word) `hashWithSalt` ty `hashWithSalt` val
+  hashWithSalt s (LValue lval) =
+    s `hashWithSalt` (10 :: Word) `hashWithSalt` lval
+  hashWithSalt _ (GCAlloc _ _ _) = error "GCAlloc is going away"
 
 instance Hashable Stm where
-  hash (Move { moveSrc = src, moveDst = dst }) = 
-    hashInt 1 `combine` hash src `combine` hash dst
-  hash (Do val) = hashInt 2 `combine` hash val
+  hashWithSalt s Move { moveSrc = src, moveDst = dst } = 
+    s `hashWithSalt` (1 :: Word) `hashWithSalt` src `hashWithSalt` dst
+  hashWithSalt s (Do val) = s `hashWithSalt` (2 :: Word) `hashWithSalt` val
 
 instance Hashable Block where
-  hash (Block { blockStms = stms, blockXfer = xfer }) =
-    hash stms `combine` hash xfer
+  hashWithSalt s Block { blockStms = stms, blockXfer = xfer } =
+    s `hashWithSalt` stms `hashWithSalt` xfer
 
 instance Hashable Label where
-  hash (Label node) = hash node
+  hashWithSalt s (Label node) = s `hashWithSalt` node
 
 instance Hashable Id where
-  hash (Id name) = hash name
+  hashWithSalt s (Id name) = s `hashWithSalt` name
 
 instance Hashable Globalname where
-  hash (Globalname name) = hash name
+  hashWithSalt s (Globalname name) = s `hashWithSalt` name
 
 instance Hashable Fieldname where
-  hash (Fieldname name) = hash name
+  hashWithSalt s (Fieldname name) = s `hashWithSalt` name
 {-
 instance Format Label where
   format (Label l) = "L" <> l
