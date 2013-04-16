@@ -49,9 +49,7 @@ data Ptr
       -- | The mutability of the pointed-to data.
       gcMutability :: !Mutability,
       -- | The underlying element type.
-      gcTy :: gctype,
-      -- | The position in source from which this originates.
-      gcPos :: !Pos
+      gcTy :: gctype
     }
   -- | An object in non-GC space
   | Native {
