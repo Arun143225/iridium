@@ -1,8 +1,10 @@
-proglang-backend
+CHILL: Common High-level Intermediate Language Library
 ================
 
-Tools and IR languages for compiling languages.
-
+A library whose goal is to produce several common high-level
+intermediate languages, and facilities for compiling them.  The
+current compilation target is LLVM, though others (JVM, CIL, etc)
+may follow.
 
 This package is designed to assist in compiling languages to produce
 executable files.  At the moment, it contains one IR language, though
@@ -11,8 +13,8 @@ others are planned.
  * FlatIR: A simply-typed language with flat scopes, whose
    instructions correspond to LLVM's.  However, FlatIR has mutable
    variables, supports variant types (not implemented), and allows
-   variables of any type (not implemented).  Also, it makes
-   instruction selection decisions based on the types of arguments.
+   variables of any type.  Also, it makes instruction selection
+   decisions based on  the types of arguments.
 
    FlatIR also contains rather elaborate information pertaining to
    garbage collection.
