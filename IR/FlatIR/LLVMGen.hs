@@ -55,9 +55,26 @@ import qualified IR.FlatIR.LLVMGen.Globals as Globals
 import qualified IR.FlatIR.LLVMGen.Metadata as Metadata
 import qualified IR.FlatIR.LLVMGen.Types as Types
 
+-- | A datatype representing parameters to the compiler.
+data CompileParams =
+  CompileParams {
+    -- | The DWARF Language ID.
+    languageId :: Word,
+    -- | The name of the compiler (will be indicated in debugging information).
+    producerName :: String,
+    -- | Whether or not this module is the main module for the program.
+    main :: Bool,
+    -- | Whether or not this module is optimized.
+    optimize :: Bool,
+    -- | The runtime version.
+    runtimeVersion :: Word,
+    -- | The compiler flags.
+    flags :: String,
+  }
+
 -- | Generate LLVM IR from the FlatIR module.
-toLLVM :: Graph gr =>
-          Module gr
+toLLVM :: Graph gr
+       => Module gr
        -- ^ The FlatIR module being translated.
        -> IO LLVM.ModuleRef
        -- ^ The LLVM Module.
