@@ -17,21 +17,19 @@
 {-# OPTIONS_GHC -funbox-strict-fields -Wall -Werror #-}
 
 -- | This module defines the FlatIR language.
---
+-- 
 -- FlatIR is a simply-typed flat-scoped intermediate language.  It
 -- is designed to be reasonably close to LLVM, with instructions
 -- similar to LLVM's, but without some of the difficulties of LLVM.
---
+-- 
 -- At the moment, the FlatIR language is under revision, and will
 -- probably change quite a bit.
---
+-- 
 -- Things that need to be done:
---   * Redesign the language so that compilation relies more on types
 --   * Add notions of vtables and lookups to the language
 --   * Add variant types
 --   * Redesign/modify certain instructions (Deref, Call, Cast, Alloc)
 --   * Add exception handling
---   * Add support for static linking
 module IR.FlatIR.Syntax(
        -- * Indexes
        GCHeader(..),
@@ -61,16 +59,22 @@ module IR.FlatIR.Syntax(
        Transfer(..),
 
        -- ** Definitions
+       DeclNames(..),
        Block(..),
        Body(..),
        Global(..),
-       Module(..)
+       Module(..),
+       StmModule,
+       SSAModule
        ) where
 
 import Data.Array
 import Data.Graph.Inductive.Graph(Node)
 --import Data.Graph.Inductive.Query.DFS
 import Data.Hashable
+import Data.Hashable.Extras
+import Data.Hash.ExtraInstances()
+import Data.Map(Map)
 import Data.Maybe
 import Data.Interval(Intervals)
 import Data.Pos
@@ -78,7 +82,7 @@ import Data.Word
 import IR.Common.Ptr
 import IR.Common.Operator
 import Prelude hiding (head)
---import Prelude.Extras(Eq1, Ord1)
+import Prelude.Extras
 --import Text.Format
 
 -- FlatIR is a simply-typed IR intended to be close to LLVM, but not
@@ -356,7 +360,8 @@ data Exp =
   -- | An LValue
   | LValue !LValue
 
--- | A statement.  Represents an effectful action.
+-- | A statement.  Represents an effectful action for the statement
+-- form of the IR.
 data Stm =
   -- | Update the given lvalue
     Move {
@@ -370,11 +375,36 @@ data Stm =
   -- | Execute an expression
   | Do !Exp
 
+-- | A binding.  Represents an SSA binding in the SSA form of the
+-- language.
+data Bind =
+    -- | A Phi-node.
+    Phi {
+      -- | The name being bound.
+      phiName :: !Id,
+      -- | A map from inbound edges to values
+      phiVals :: Map Label Exp,
+      -- | The position in source from which this arises.
+      phiPos :: !Pos
+    }
+    -- | A regular binding
+  | Bind {
+      -- | The name being bound.
+      bindName :: !Id,
+      -- | The value beind bound.
+      bindVal :: Exp,
+      -- | The position in source from which this originates.
+      bindPos :: !Pos
+    }
+    -- | Execute an expression for its effect only.  Analogous to Do
+    -- in the statement language.
+  | Effect !Exp
+
 -- | A basic block
-data Block =
+data Block elem =
     Block {
       -- | The statements in the basic block
-      blockStms :: [Stm],
+      blockBody :: [elem],
       -- | The transfer for the basic block
       blockXfer :: Transfer,
       -- | The position in source from which this arises.
@@ -385,36 +415,49 @@ data Block =
 -- remaining types.
 
 -- | The body of a function
-data Body gr =
+data Body elem gr =
     Body {
       -- | The entry block
-      bodyEntry :: Label,
+      bodyEntry :: !Label,
       -- | The CFG
-      bodyCFG :: (gr Block ())
+      bodyCFG :: (gr (Block elem) ())
     }
 
+-- | A datatype encoding the various names of a global declaration.
+data DeclNames =
+  DeclNames {
+    -- | The basic name of the declaration.
+    basicName :: !String,
+    -- | The linkage name of the declaration (often encodes type
+    -- information, as in C++)
+    linkageName :: !String,
+    -- | The displayed name of the declaration (usually contains type
+    -- information).
+    displayName :: !String
+  }
+
 -- | A global value.  Represents a global variable or a function.
-data Global gr =
+data Global elem gr =
   -- | A function
     Function {
       -- | Name of the function
-      funcName :: !String,
+      funcName :: !DeclNames,
       -- | Return type
       funcRetTy :: Type,
       -- | A map from identifiers for arguments and local variables to
-      -- their types
+      -- their types.
       funcValTys :: Array Id Type,
       -- | A list of the identifiers representing arguments
       funcParams :: [Id],
       -- | The function's body, if it has one
-      funcBody :: Maybe (Body gr),
+      funcBody :: Maybe (Body elem gr),
       -- | The position in source from which this arises.
       funcPos :: !Pos
     }
   -- | A global variable
   | GlobalVar {
       -- | The name of the variable.
-      gvarName :: !String,
+      gvarName :: !DeclNames,
       -- | The type of the variable.
       gvarTy :: Type,
       -- | The initializer.
@@ -426,7 +469,7 @@ data Global gr =
     }
 
 -- | A module.  Represents a concept similar to an LLVM module.
-data Module gr =
+data Module elem gr =
     Module {
       -- | Name of the module
       modName :: !String,
@@ -439,11 +482,14 @@ data Module gr =
       -- and accessors)
       modGenGCs :: [GCHeader],
       -- | A map from global names to the corresponding functions
-      modGlobals :: Array Globalname (Global gr),
+      modGlobals :: Array Globalname (Global elem gr),
       -- | The position in source from which this arises.  This is here
       -- solely to record filenames in a unified way.
       modPos :: !Pos
     }
+
+type StmModule = Module Stm
+type SSAModule = Module Bind
 
 instance Eq Type where
   FuncType { funcTyRetTy = retty1, funcTyArgTys = params1 } ==
@@ -512,6 +558,16 @@ instance Eq Stm where
   (Do exp1) == (Do exp2) = exp1 == exp2
   _ == _ = False
 
+instance Eq Bind where
+  Phi { phiName = name1, phiVals = vals1 } ==
+    Phi { phiName = name2, phiVals = vals2 } =
+    name1 == name2 && vals1 == vals2
+  Bind { bindName = name1, bindVal = val1 } ==
+    Bind { bindName = name2, bindVal = val2 } =
+    name1 == name2 && val1 == val2
+  (Effect e1) == (Effect e2) = e1 == e2
+  _ == _ = False
+
 instance Eq Transfer where
   Goto { gotoLabel = label1 } == Goto { gotoLabel = label2 } = label1 == label2
   Case { caseVal = val1, caseCases = cases1, caseDefault = def1 } ==
@@ -521,10 +577,12 @@ instance Eq Transfer where
   Unreachable _ == Unreachable _ = True
   _ == _ = False
 
-instance Eq Block where
-  Block { blockStms = stms1, blockXfer = xfer1 } ==
-    Block { blockStms = stms2, blockXfer = xfer2 } =
-    stms1 == stms2 && xfer1 == xfer2
+instance Eq1 Block where
+  Block { blockBody = body1, blockXfer = xfer1 } ==#
+    Block { blockBody = body2, blockXfer = xfer2 } =
+    xfer1 == xfer2 && (body1 == body2)
+
+instance Eq elem => Eq (Block elem) where (==) = (==#)
 
 instance Ord Type where
   compare FuncType { funcTyRetTy = retty1, funcTyArgTys = params1 }
@@ -675,6 +733,23 @@ instance Ord Stm where
   compare _ (Move {}) = GT
   compare (Do exp1) (Do exp2) = compare exp1 exp2
 
+instance Ord Bind where
+  compare Phi { phiName = name1, phiVals = vals1 }
+          Phi { phiName = name2, phiVals = vals2 } =
+    case compare name1 name2 of
+      EQ -> compare vals1 vals2
+      out -> out
+  compare Phi {} _ = LT
+  compare _ Phi {} = GT
+  compare Bind { bindName = name1, bindVal = val1 }
+          Bind { bindName = name2, bindVal = val2 } =
+    case compare name1 name2 of
+      EQ -> compare val1 val2
+      out -> out
+  compare Bind {} _ = LT
+  compare _ Bind {} = GT
+  compare (Effect e1) (Effect e2) = compare e1 e2
+
 instance Ord Transfer where
   compare Goto { gotoLabel = label1 } Goto { gotoLabel = label2 } =
     compare label1 label2
@@ -694,12 +769,14 @@ instance Ord Transfer where
   compare _ Ret {} = GT
   compare (Unreachable _) (Unreachable _) = EQ
 
-instance Ord Block where
-  compare Block { blockStms = stms1, blockXfer = xfer1 }
-          Block { blockStms = stms2, blockXfer = xfer2 } =
+instance Ord1 Block where
+  compare1 Block { blockBody = body1, blockXfer = xfer1 }
+           Block { blockBody = body2, blockXfer = xfer2 } =
     case compare xfer1 xfer2 of
-      EQ -> compare stms1 stms2
+      EQ -> compare1 body1 body2
       out -> out
+
+instance Ord elem => Ord (Block elem) where compare = compare1
 
 instance Position Type where
   pos FuncType { funcTyPos = p } = p
@@ -741,14 +818,19 @@ instance Position Stm where
   pos Move { movePos = p } = p
   pos (Do expr) = pos expr
 
-instance Position Block where
+instance Position Bind where
+  pos Phi { phiPos = p } = p
+  pos Bind { bindPos = p } = p
+  pos (Effect e) = pos e
+
+instance Position (Block elem) where
   pos Block { blockPos = p } = p
 
-instance Position (Global gr) where
+instance Position (Global elem gr) where
   pos Function { funcPos = p } = p
   pos GlobalVar { gvarPos = p } = p
 
-instance Position (Module gr) where
+instance Position (Module elem gr) where
   pos Module { modPos = p } = p
 
 instance Hashable Typename where
@@ -830,9 +912,20 @@ instance Hashable Stm where
     s `hashWithSalt` (1 :: Word) `hashWithSalt` src `hashWithSalt` dst
   hashWithSalt s (Do val) = s `hashWithSalt` (2 :: Word) `hashWithSalt` val
 
-instance Hashable Block where
-  hashWithSalt s Block { blockStms = stms, blockXfer = xfer } =
-    s `hashWithSalt` stms `hashWithSalt` xfer
+instance Hashable Bind where
+  hashWithSalt s Phi { phiName = name1, phiVals = vals1 } =
+    s `hashWithSalt` (1 :: Word) `hashWithSalt` name1 `hashWithSalt` vals1
+  hashWithSalt s Bind { bindName = name1, bindVal = val1 } =
+    s `hashWithSalt` (2 :: Word) `hashWithSalt` name1 `hashWithSalt` val1
+  hashWithSalt s (Effect e1) =
+    s `hashWithSalt` (3 :: Word) `hashWithSalt` e1
+
+instance Hashable1 Block where
+  hashWithSalt1 s Block { blockBody = body, blockXfer = xfer } =
+    (s `hashWithSalt` xfer) `hashWithSalt1` body
+
+instance Hashable elem => Hashable (Block elem) where
+  hashWithSalt = hashWithSalt1
 
 instance Hashable Label where
   hashWithSalt s (Label node) = s `hashWithSalt` node
@@ -1020,7 +1113,7 @@ instance Graph gr => Format (Module gr) where
                 (space : gcgendocs) ++ (space : globalsdocs)
     in
       braceBlock ("module" <+> name) content
-
+-}
 instance Show Label where
   show (Label l) = "L" ++ show l
 
@@ -1032,7 +1125,7 @@ instance Show Id where
 
 instance Show Globalname where
   show (Globalname g) = "@" ++ show g 
-
+{-
 instance Show Unop where
   show = show . format
 
