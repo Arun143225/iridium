@@ -1,3 +1,6 @@
+Attention: This library is under active development.  The method of generating LLVM is 
+being switched from an FFI binding library to the llvm-general library.
+
 CHILL: Common High-level Intermediate Language Library
 ================
 
@@ -84,9 +87,3 @@ Specific things to be done:
        possibly address of GC fields.
 
    11) Output debugging information, have meaningful variable names
-
-*NOTE*: This package in under active design and development.  The
- SimpleIR language is likely to change and/or expand.  Compilation to
- LLVM is only partially complete at this point, and some important
- things are not supported (structures as local variables, variant
- types at all, etc.)
