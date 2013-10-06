@@ -15,6 +15,7 @@
 -- Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
 -- 02110-1301 USA
 {-# OPTIONS_GHC -funbox-strict-fields -Wall -Werror #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 
 -- | This module defines the FlatIR language.
 -- 
@@ -56,6 +57,7 @@ module IR.FlatIR.Syntax(
        Exp(..),
        LValue(..),
        Stm(..),
+       Bind(..),
        Transfer(..),
 
        -- ** Definitions
@@ -65,12 +67,16 @@ module IR.FlatIR.Syntax(
        Global(..),
        Module(..),
        StmModule,
-       SSAModule
+       SSAModule,
+
+       -- ** Utilities
+       renameType
        ) where
 
 import Data.Array
 import Data.Graph.Inductive.Graph(Node)
 --import Data.Graph.Inductive.Query.DFS
+import Data.Functor
 import Data.Hashable
 import Data.Hashable.Extras
 import Data.Hash.ExtraInstances()
@@ -81,9 +87,10 @@ import Data.Pos
 import Data.Word
 import IR.Common.Ptr
 import IR.Common.Operator
+import IR.Common.RenameType
 import Prelude hiding (head)
 import Prelude.Extras
---import Text.Format
+import Text.Format
 
 -- FlatIR is a simply-typed IR intended to be close to LLVM, but not
 -- in SSA form.  It is intended primarily as a jumping-off point for
@@ -490,6 +497,50 @@ data Module elem gr =
 
 type StmModule = Module Stm
 type SSAModule = Module Bind
+
+instance RenameType Typename Type where
+  renameType f ty @ FuncType { funcTyRetTy = retty, funcTyArgTys = argtys } =
+    ty { funcTyArgTys = renameType f argtys, funcTyRetTy = renameType f retty }
+  renameType f ty @ StructType { structFields = fields } =
+    ty { structFields = fmap (\(n, m, t) -> (n, m, renameType f t)) fields }
+  renameType f ty @ ArrayType { arrayElemTy = elemty } =
+    ty { arrayElemTy = renameType f elemty }
+  renameType f ty @ PtrType { ptrTy = inner } =
+    ty { ptrTy = renameType f inner }
+  renameType f ty @ IdType { idName = name } = ty { idName = f name }
+  renameType _ ty = ty
+
+instance RenameType Typename Exp where
+  renameType f e @ Binop { binopLeft = left, binopRight = right } =
+    e { binopLeft = renameType f left, binopRight = renameType f right }
+  renameType f e @ Call { callFunc = func, callArgs = args } =
+    e { callFunc = renameType f func, callArgs = renameType f args }
+  renameType f e @ Conv { convTy = ty, convVal = val } =
+    e { convTy = renameType f ty, convVal = renameType f val }
+  renameType f e @ Cast { castTy = ty, castVal = val } =
+    e { castTy = renameType f ty, castVal = renameType f val }
+  renameType f e @ Unop { unopVal = val } = e { unopVal = renameType f val }
+  renameType f e @ AddrOf { addrofVal = val } =
+    e { addrofVal = renameType f val }
+  renameType f e @ StructConst { structConstFields = fields,
+                                 structConstTy = ty } =
+    e { structConstFields = renameType f fields,
+        structConstTy = renameType f ty }
+  renameType f e @ ArrayConst { arrayConstVals = vals, arrayConstTy = ty } =
+    e { arrayConstVals = renameType f vals, arrayConstTy = renameType f ty }
+  renameType f e @ NumConst { numConstTy = ty } =
+    e { numConstTy = renameType f ty }
+  renameType f (LValue l) = LValue (renameType f l)
+  renameType _ e = e
+
+instance RenameType Typename LValue where
+  renameType f lval @ Index { idxVal = inner } =
+    lval { idxVal = renameType f inner }
+  renameType f lval @ Field { fieldVal = inner } =
+    lval { fieldVal = renameType f inner }
+  renameType f lval @ Deref { derefVal = inner } =
+    lval { derefVal = renameType f inner }
+  renameType _ lval = lval
 
 instance Eq Type where
   FuncType { funcTyRetTy = retty1, funcTyArgTys = params1 } ==
@@ -938,7 +989,7 @@ instance Hashable Globalname where
 
 instance Hashable Fieldname where
   hashWithSalt s (Fieldname name) = s `hashWithSalt` name
-{-
+
 instance Format Label where
   format (Label l) = "L" <> l
 
@@ -950,7 +1001,7 @@ instance Format Id where
 
 instance Format Globalname where
   format (Globalname g) = "@" <> g 
-
+{-
 -- This mess is a good example of what I mean about format and a
 -- naming function.
 
@@ -1126,12 +1177,6 @@ instance Show Id where
 instance Show Globalname where
   show (Globalname g) = "@" ++ show g 
 {-
-instance Show Unop where
-  show = show . format
-
-instance Show Binop where
-  show = show . format
-
 instance Graph gr => Show (Module gr) where
   show = show . format
 -}
