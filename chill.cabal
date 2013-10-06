@@ -18,10 +18,15 @@ Cabal-version:       >= 1.9.2
 
 Library
   build-depends:        base, mtl, hashable, pretty, fgl, array, prelude-extras,
-                        bitarray, proglang-util, containers, hashable-extras
+                        bitarray, proglang-util, containers, hashable-extras, lens
   other-modules:        IR.Common.Ptr,
                         IR.Common.Operator,
+                        IR.Common.Rename,
+                        IR.Common.Rename.Class,
+                        IR.Common.RenameType,
+                        IR.Common.RenameType.Class,
                         IR.FlatIR.Syntax
+--                        IR.FlatIR.SSAConvert
 --                        IR.FlatIR.LLVMGen
 --                        IR.FlatIR.LLVMGen.CodeGen,
 --                        IR.FlatIR.LLVMGen.ConstValue,
