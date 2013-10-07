@@ -152,6 +152,11 @@ instance (Hashable gctype, Hashable nativetype) =>
   hashWithSalt s Native { nativeTy = ty, nativeMutability = mut } =
     s `hashWithSalt` (1 :: Word) `hashWithSalt` ty `hashWithSalt` mut
 
+instance Functor (Ptr gctype) where
+  fmap f ptr @ Native { nativeTy = ty } = ptr { nativeTy = f ty }
+  fmap _ ptr @ GC { gcClass = cls, gcMutability = mut, gcTy = ty } =
+    ptr { gcClass = cls, gcMutability = mut, gcTy = ty }
+
 instance Show Mobility where
   show Mobile = "mobile"
   show Immobile = "immobile"
