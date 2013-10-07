@@ -51,9 +51,6 @@ Specific things to be done:
    1) Better error messages (needs a redesign of Format from
       proglang-utils)
 
-   2) Create monad for compiling programs (possibly create monad
-      inside llvm-bindings library)
-
  * FlatIR:
 
    1) Add variant types and support for compiling them.
@@ -76,15 +73,11 @@ Specific things to be done:
 
    5) Output TBAA data.
 
-   6) Add possible-value data to integer types (sort of done)
+   6) Link GC headers and GC read/write/addr functions into metadata directly
 
-   7) Link GC headers and GC read/write/addr functions into metadata directly
+   7) Rework metadata to correspond to llvm plugin.
 
-   8) Rework metadata to correspond to llvm plugin.
+   8) Build table of GC accessor functions, implement read/write,
+      possibly address of GC fields.
 
-   9) Add Box type and operations.
-
-   10) Build table of GC accessor functions, implement read/write,
-       possibly address of GC fields.
-
-   11) Output debugging information, have meaningful variable names
+   9) Output debugging information, have meaningful variable names
