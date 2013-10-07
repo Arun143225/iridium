@@ -74,7 +74,7 @@ data Index =
   | ValueInd !LLVM.ValueRef
 
 -- | Accesses represent a slightly more complex value type.  These are
--- essentiall the dual of Locations, and are paired up with them in
+-- essentially the dual of Locations, and are paired up with them in
 -- genVarWrite to implement writes.
 data Access =
   -- | An LLVM value
