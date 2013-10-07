@@ -87,6 +87,7 @@ import Data.Pos
 import Data.Word
 import IR.Common.Ptr
 import IR.Common.Operator
+import IR.Common.Rename
 import IR.Common.RenameType
 import Prelude hiding (head)
 import Prelude.Extras
@@ -131,6 +132,13 @@ data Type =
       structFields :: Array Fieldname (String, Mutability, Type),
       -- | The position in source from which this arises.
       structPos :: !Pos
+    }
+  -- | A variant, representing both tuples and records
+  | VariantType {
+      -- | The fields of the struct.
+      variantForms :: Array Variantname (String, Mutability, Type),
+      -- | The position in source from which this arises.
+      variantPos :: !Pos
     }
   -- | An array.  Unlike LLVM arrays, these may be variable-sized
   | ArrayType {
@@ -186,6 +194,10 @@ newtype Id = Id Word
 
 -- | A field name, indexes fields
 newtype Fieldname = Fieldname Word
+  deriving (Ord, Eq, Ix)
+
+-- | A variant name, indexes fields
+newtype Variantname = Variantname Word
   deriving (Ord, Eq, Ix)
 
 -- | A type name, indexes types
@@ -252,6 +264,16 @@ data LValue =
       fieldName :: !Fieldname,
       -- | The position in source from which this arises.
       fieldPos :: !Pos
+    }
+  -- | A form of a variant
+  | Form {
+      -- | The value whose field is being accessed.  Must be a
+      -- structure type.
+      formVal :: Exp,
+      -- | The name of the field being accessed.
+      formName :: !Variantname,
+      -- | The position in source from which this arises.
+      formPos :: !Pos
     }
   -- | Dereference a pointer
   | Deref {
@@ -336,33 +358,44 @@ data Exp =
       -- | The position in source from which this arises.
       addrofPos :: !Pos
     }
-  -- | A structure constant
-  | StructConst {
-      -- | The constant's type, must be a struct type.
-      structConstTy :: Type,
+  -- | A structure literal
+  | StructLit {
+      -- | The literal's type, must be a struct type.
+      structLitTy :: Type,
       -- | The constant's field values
-      structConstFields :: Array Fieldname Exp,
+      structLitFields :: Array Fieldname Exp,
       -- | The position in source from which this arises.
-      structConstPos :: !Pos
+      structLitPos :: !Pos
     }
-  -- | An array constant
-  | ArrayConst {
-      -- | The constant's type, must be an array type.
-      arrayConstTy :: Type,
-      -- | The constant's values
-      arrayConstVals :: [Exp],
+  -- | A variant literal
+  | VariantLit {
+      -- | The literal's type, must be a variant type.
+      variantLitTy :: Type,
+      -- | The literal's form.
+      variantLitForm :: !Variantname,
+      -- | The literal's inner value.
+      variantLitVal :: Exp,
       -- | The position in source from which this arises.
-      arrayConstPos :: !Pos
+      variantLitPos :: !Pos      
+    }
+  -- | An array literal
+  | ArrayLit {
+      -- | The constant's type, must be an array type.
+      arrayLitTy :: Type,
+      -- | The constant's values
+      arrayLitVals :: [Exp],
+      -- | The position in source from which this arises.
+      arrayLitPos :: !Pos
     }
   -- | A numerical constant with a given size and signedness XXX add a
   -- floating point constant.
-  | NumConst {
+  | NumLit {
       -- | The constant's type, must be an integer or float type.
-      numConstTy :: Type,
+      numLitTy :: Type,
       -- | The constant's value
-      numConstVal :: !Integer,
+      numLitVal :: !Integer,
       -- | The position in source from which this arises.
-      numConstPos :: !Pos
+      numLitPos :: !Pos
     }
   -- | An LValue
   | LValue !LValue
@@ -498,50 +531,6 @@ data Module elem gr =
 type StmModule = Module Stm
 type SSAModule = Module Bind
 
-instance RenameType Typename Type where
-  renameType f ty @ FuncType { funcTyRetTy = retty, funcTyArgTys = argtys } =
-    ty { funcTyArgTys = renameType f argtys, funcTyRetTy = renameType f retty }
-  renameType f ty @ StructType { structFields = fields } =
-    ty { structFields = fmap (\(n, m, t) -> (n, m, renameType f t)) fields }
-  renameType f ty @ ArrayType { arrayElemTy = elemty } =
-    ty { arrayElemTy = renameType f elemty }
-  renameType f ty @ PtrType { ptrTy = inner } =
-    ty { ptrTy = renameType f inner }
-  renameType f ty @ IdType { idName = name } = ty { idName = f name }
-  renameType _ ty = ty
-
-instance RenameType Typename Exp where
-  renameType f e @ Binop { binopLeft = left, binopRight = right } =
-    e { binopLeft = renameType f left, binopRight = renameType f right }
-  renameType f e @ Call { callFunc = func, callArgs = args } =
-    e { callFunc = renameType f func, callArgs = renameType f args }
-  renameType f e @ Conv { convTy = ty, convVal = val } =
-    e { convTy = renameType f ty, convVal = renameType f val }
-  renameType f e @ Cast { castTy = ty, castVal = val } =
-    e { castTy = renameType f ty, castVal = renameType f val }
-  renameType f e @ Unop { unopVal = val } = e { unopVal = renameType f val }
-  renameType f e @ AddrOf { addrofVal = val } =
-    e { addrofVal = renameType f val }
-  renameType f e @ StructConst { structConstFields = fields,
-                                 structConstTy = ty } =
-    e { structConstFields = renameType f fields,
-        structConstTy = renameType f ty }
-  renameType f e @ ArrayConst { arrayConstVals = vals, arrayConstTy = ty } =
-    e { arrayConstVals = renameType f vals, arrayConstTy = renameType f ty }
-  renameType f e @ NumConst { numConstTy = ty } =
-    e { numConstTy = renameType f ty }
-  renameType f (LValue l) = LValue (renameType f l)
-  renameType _ e = e
-
-instance RenameType Typename LValue where
-  renameType f lval @ Index { idxVal = inner } =
-    lval { idxVal = renameType f inner }
-  renameType f lval @ Field { fieldVal = inner } =
-    lval { fieldVal = renameType f inner }
-  renameType f lval @ Deref { derefVal = inner } =
-    lval { derefVal = renameType f inner }
-  renameType _ lval = lval
-
 instance Eq Type where
   FuncType { funcTyRetTy = retty1, funcTyArgTys = params1 } ==
     FuncType { funcTyRetTy = retty2, funcTyArgTys = params2 } =
@@ -549,6 +538,9 @@ instance Eq Type where
   StructType { structPacked = packed1, structFields = fields1 } ==
     StructType { structPacked = packed2, structFields = fields2 } =
     packed1 == packed2 && fields1 == fields2
+  VariantType { variantForms = forms1 } ==
+    VariantType { variantForms = forms2 } =
+    forms1 == forms2
   ArrayType { arrayLen = len1, arrayElemTy = inner1 } ==
     ArrayType { arrayLen = len2, arrayElemTy = inner2 } =
     len1 == len2 && inner1 == inner2
@@ -568,6 +560,9 @@ instance Eq LValue where
     Index { idxVal = val2, idxIndex = idx2 } = val1 == val2 && idx1 == idx2
   Field { fieldVal = val1, fieldName = name1 } ==
     Field { fieldVal = val2, fieldName = name2 } = val1 == val2 && name1 == name2
+  Form { formVal = val1, formName = name1 } ==
+    Form { formVal = val2, formName = name2 } =
+    val1 == val2 && name1 == name2
   Deref { derefVal = val1 } == Deref { derefVal = val2 } = val1 == val2
   Var { varName = name1 } == Var { varName = name2 } = name1 == name2
   Global { globalName = name1 } == Global { globalName = name2 } =
@@ -591,14 +586,19 @@ instance Eq Exp where
     Cast { castTy = ty2, castVal = val2 } =
     ty1 == ty2 && val1 == val2
   AddrOf { addrofVal = val1 } == AddrOf { addrofVal = val2 } = val1 == val2
-  StructConst { structConstTy = ty1, structConstFields = fields1 } ==
-    StructConst { structConstTy = ty2, structConstFields = fields2 } =
+  StructLit { structLitTy = ty1, structLitFields = fields1 } ==
+    StructLit { structLitTy = ty2, structLitFields = fields2 } =
     ty1 == ty2 && fields1 == fields2
-  ArrayConst { arrayConstTy = ty1, arrayConstVals = vals1 } ==
-    ArrayConst { arrayConstTy = ty2, arrayConstVals = vals2 } =
+  VariantLit { variantLitTy = ty1, variantLitForm = form1,
+               variantLitVal = val1 } ==
+    VariantLit { variantLitTy = ty2, variantLitForm = form2,
+                 variantLitVal = val2 } =
+    form1 == form2 && ty1 == ty2 && val1 == val2
+  ArrayLit { arrayLitTy = ty1, arrayLitVals = vals1 } ==
+    ArrayLit { arrayLitTy = ty2, arrayLitVals = vals2 } =
     ty1 == ty2 && vals1 == vals2
-  NumConst { numConstTy = ty1, numConstVal = val1 } ==
-    NumConst { numConstTy = ty2, numConstVal = val2 } =
+  NumLit { numLitTy = ty1, numLitVal = val1 } ==
+    NumLit { numLitTy = ty2, numLitVal = val2 } =
     ty1 == ty2 && val1 == val2
   (LValue lval1) == (LValue lval2) = lval1 == lval2
   _ == _ = False
@@ -650,6 +650,11 @@ instance Ord Type where
       out -> out
   compare StructType {} _ = LT
   compare _ StructType {} = GT
+  compare VariantType { variantForms = forms1 }
+          VariantType { variantForms = forms2 } =
+    compare forms1 forms2
+  compare VariantType {} _ = LT
+  compare _ VariantType {} = GT
   compare ArrayType { arrayLen = len1, arrayElemTy = inner1 }
           ArrayType { arrayLen = len2, arrayElemTy = inner2 } =
     case compare len1 len2 of
@@ -697,6 +702,13 @@ instance Ord LValue where
       out -> out
   compare Field {} _ = LT
   compare _ Field {} = GT
+  compare Form { formVal = val1, formName = name1 }
+          Form { formVal = val2, formName = name2 } =
+    case compare name1 name2 of
+      EQ -> compare val1 val2
+      out -> out
+  compare Form {} _ = LT
+  compare _ Form {} = GT
   compare Deref { derefVal = val1 } Deref { derefVal = val2 } =
     compare val1 val2
   compare Deref {} _ = LT
@@ -751,27 +763,38 @@ instance Ord Exp where
     compare val1 val2
   compare AddrOf {} _ = LT
   compare _ AddrOf {} = GT
-  compare StructConst { structConstTy = ty1, structConstFields = fields1 }
-          StructConst { structConstTy = ty2, structConstFields = fields2 } =
+  compare StructLit { structLitTy = ty1, structLitFields = fields1 }
+          StructLit { structLitTy = ty2, structLitFields = fields2 } =
     case compare ty1 ty2 of
       EQ -> compare fields1 fields2
       out -> out
-  compare StructConst {} _ = LT
-  compare _ StructConst {} = GT
-  compare ArrayConst { arrayConstTy = ty1, arrayConstVals = vals1 }
-          ArrayConst { arrayConstTy = ty2, arrayConstVals = vals2 } =
+  compare StructLit {} _ = LT
+  compare _ StructLit {} = GT
+  compare VariantLit { variantLitTy = ty1, variantLitForm = form1,
+                       variantLitVal = val1 }
+          VariantLit { variantLitTy = ty2, variantLitForm = form2,
+                       variantLitVal = val2 } =
+    case compare form1 form2 of
+      EQ -> case compare ty1 ty2 of
+        EQ -> compare val1 val2
+        out -> out
+      out -> out
+  compare VariantLit {} _ = LT
+  compare _ VariantLit {} = GT
+  compare ArrayLit { arrayLitTy = ty1, arrayLitVals = vals1 }
+          ArrayLit { arrayLitTy = ty2, arrayLitVals = vals2 } =
     case compare ty1 ty2 of
       EQ -> compare vals1 vals2
       out -> out
-  compare ArrayConst {} _ = LT
-  compare _ ArrayConst {} = GT
-  compare NumConst { numConstTy = ty1, numConstVal = val1 }
-          NumConst { numConstTy = ty2, numConstVal = val2 } =
+  compare ArrayLit {} _ = LT
+  compare _ ArrayLit {} = GT
+  compare NumLit { numLitTy = ty1, numLitVal = val1 }
+          NumLit { numLitTy = ty2, numLitVal = val2 } =
     case compare ty1 ty2 of
       EQ -> compare val1 val2
       out -> out
-  compare NumConst {} _ = LT
-  compare _ NumConst {} = GT
+  compare NumLit {} _ = LT
+  compare _ NumLit {} = GT
   compare (LValue lval1) (LValue lval2) = compare lval1 lval2
 
 instance Ord Stm where
@@ -832,6 +855,7 @@ instance Ord elem => Ord (Block elem) where compare = compare1
 instance Position Type where
   pos FuncType { funcTyPos = p } = p
   pos StructType { structPos = p } = p
+  pos VariantType { variantPos = p } = p
   pos ArrayType { arrayPos = p } = p
   pos PtrType { ptrPos = p } = p
   pos IntType { intPos = p } = p
@@ -846,15 +870,17 @@ instance Position Exp where
   pos Cast { castPos = p } = p
   pos Unop { unopPos = p } = p
   pos AddrOf { addrofPos = p } = p
-  pos StructConst { structConstPos = p } = p
-  pos ArrayConst { arrayConstPos = p } = p
-  pos NumConst { numConstPos = p } = p
+  pos StructLit { structLitPos = p } = p
+  pos VariantLit { variantLitPos = p } = p
+  pos ArrayLit { arrayLitPos = p } = p
+  pos NumLit { numLitPos = p } = p
   pos (LValue l) = pos l
   pos (GCAlloc _ _ _) = error "GCAlloc is going away"
 
 instance Position LValue where
   pos Index { idxPos = p } = p
   pos Field { fieldPos = p } = p
+  pos Form { formPos = p } = p
   pos Deref { derefPos = p } = p
   pos Var { varPos = p } = p
   pos Global { globalPos = p } = p
@@ -896,20 +922,22 @@ instance Hashable Type where
   hashWithSalt s StructType { structPacked = packed, structFields = fields } =
     s `hashWithSalt` (1 :: Word) `hashWithSalt`
       packed `hashWithSalt` (elems fields)
+  hashWithSalt s VariantType { variantForms = forms } =
+    s `hashWithSalt` (2 :: Word) `hashWithSalt` (elems forms)
   hashWithSalt s ArrayType { arrayLen = Nothing, arrayElemTy = inner } =
-    s `hashWithSalt` (2 :: Word) `hashWithSalt` (0 :: Word) `hashWithSalt` inner
+    s `hashWithSalt` (3 :: Word) `hashWithSalt` (0 :: Word) `hashWithSalt` inner
   hashWithSalt s ArrayType { arrayLen = Just size, arrayElemTy = inner } =
-    s `hashWithSalt` (2 :: Word) `hashWithSalt` size `hashWithSalt` inner
+    s `hashWithSalt` (3 :: Word) `hashWithSalt` size `hashWithSalt` inner
   hashWithSalt s PtrType { ptrTy = objtype } =
-    s `hashWithSalt` (3 :: Word) `hashWithSalt` objtype
+    s `hashWithSalt` (4 :: Word) `hashWithSalt` objtype
   hashWithSalt s IntType { intSigned = signed, intIntervals = intervals,
                            intSize = size } =
-    s `hashWithSalt` (4 :: Word) `hashWithSalt` signed `hashWithSalt`
+    s `hashWithSalt` (5 :: Word) `hashWithSalt` signed `hashWithSalt`
       intervals `hashWithSalt` size
   hashWithSalt s IdType { idName = Typename str } =
-    s `hashWithSalt` (5 :: Word) `hashWithSalt` str
+    s `hashWithSalt` (6 :: Word) `hashWithSalt` str
   hashWithSalt s FloatType { floatSize = size } =
-    s `hashWithSalt` (6 :: Word) `hashWithSalt` size
+    s `hashWithSalt` (7 :: Word) `hashWithSalt` size
   hashWithSalt s UnitType {} = s `hashWithSalt` (7 :: Word)
 
 instance Hashable Transfer where
@@ -927,12 +955,14 @@ instance Hashable LValue where
     s `hashWithSalt` (1 :: Word) `hashWithSalt` val `hashWithSalt` idx
   hashWithSalt s Field { fieldVal = val, fieldName = name } =
     s `hashWithSalt` (2 :: Word) `hashWithSalt` val `hashWithSalt` name
+  hashWithSalt s Form { formVal = val, formName = name } =
+    s `hashWithSalt` (3 :: Word) `hashWithSalt` val `hashWithSalt` name
   hashWithSalt s Deref { derefVal = val } =
-    s `hashWithSalt` (3 :: Word) `hashWithSalt`val
+    s `hashWithSalt` (4 :: Word) `hashWithSalt`val
   hashWithSalt s Var { varName = name } =
-    s `hashWithSalt` (4 :: Word) `hashWithSalt` name
-  hashWithSalt s Global { globalName = name } =
     s `hashWithSalt` (5 :: Word) `hashWithSalt` name
+  hashWithSalt s Global { globalName = name } =
+    s `hashWithSalt` (6 :: Word) `hashWithSalt` name
 
 instance Hashable Exp where
   hashWithSalt s Binop { binopOp = op, binopLeft = left, binopRight = right } =
@@ -948,14 +978,18 @@ instance Hashable Exp where
     s `hashWithSalt` (5 :: Word) `hashWithSalt` ty `hashWithSalt` val
   hashWithSalt s AddrOf { addrofVal = val } =
     s `hashWithSalt` (6 :: Word) `hashWithSalt` val
-  hashWithSalt s StructConst { structConstTy = ty, structConstFields = fields } =
+  hashWithSalt s StructLit { structLitTy = ty, structLitFields = fields } =
     s `hashWithSalt` (7 :: Word) `hashWithSalt` ty `hashWithSalt` (elems fields)
-  hashWithSalt s ArrayConst { arrayConstTy = ty, arrayConstVals = vals } =
-    s `hashWithSalt` (8 :: Word) `hashWithSalt` ty `hashWithSalt` vals
-  hashWithSalt s NumConst { numConstTy = ty, numConstVal = val } =
-    s `hashWithSalt` (9 :: Word) `hashWithSalt` ty `hashWithSalt` val
+  hashWithSalt s VariantLit { variantLitTy = ty, variantLitForm = form,
+                              variantLitVal = val } =
+    s `hashWithSalt` (8 :: Word) `hashWithSalt`
+    form `hashWithSalt` ty `hashWithSalt` val
+  hashWithSalt s ArrayLit { arrayLitTy = ty, arrayLitVals = vals } =
+    s `hashWithSalt` (9 :: Word) `hashWithSalt` ty `hashWithSalt` vals
+  hashWithSalt s NumLit { numLitTy = ty, numLitVal = val } =
+    s `hashWithSalt` (10 :: Word) `hashWithSalt` ty `hashWithSalt` val
   hashWithSalt s (LValue lval) =
-    s `hashWithSalt` (10 :: Word) `hashWithSalt` lval
+    s `hashWithSalt` (11 :: Word) `hashWithSalt` lval
   hashWithSalt _ (GCAlloc _ _ _) = error "GCAlloc is going away"
 
 instance Hashable Stm where
@@ -990,11 +1024,104 @@ instance Hashable Globalname where
 instance Hashable Fieldname where
   hashWithSalt s (Fieldname name) = s `hashWithSalt` name
 
+instance Hashable Variantname where
+  hashWithSalt s (Variantname name) = s `hashWithSalt` name
+
+instance RenameType Typename Type where
+  renameType f ty @ FuncType { funcTyRetTy = retty, funcTyArgTys = argtys } =
+    ty { funcTyArgTys = renameType f argtys, funcTyRetTy = renameType f retty }
+  renameType f ty @ StructType { structFields = fields } =
+    ty { structFields = fmap (\(n, m, t) -> (n, m, renameType f t)) fields }
+  renameType f ty @ VariantType { variantForms = forms } =
+    ty { variantForms = fmap (\(n, m, t) -> (n, m, renameType f t)) forms }
+  renameType f ty @ ArrayType { arrayElemTy = elemty } =
+    ty { arrayElemTy = renameType f elemty }
+  renameType f ty @ PtrType { ptrTy = inner } =
+    ty { ptrTy = renameType f inner }
+  renameType f ty @ IdType { idName = name } = ty { idName = f name }
+  renameType _ ty = ty
+
+instance RenameType Typename Exp where
+  renameType f e @ Binop { binopLeft = left, binopRight = right } =
+    e { binopLeft = renameType f left, binopRight = renameType f right }
+  renameType f e @ Call { callFunc = func, callArgs = args } =
+    e { callFunc = renameType f func, callArgs = renameType f args }
+  renameType f e @ Conv { convTy = ty, convVal = val } =
+    e { convTy = renameType f ty, convVal = renameType f val }
+  renameType f e @ Cast { castTy = ty, castVal = val } =
+    e { castTy = renameType f ty, castVal = renameType f val }
+  renameType f e @ Unop { unopVal = val } = e { unopVal = renameType f val }
+  renameType f e @ AddrOf { addrofVal = val } =
+    e { addrofVal = renameType f val }
+  renameType f e @ StructLit { structLitFields = fields, structLitTy = ty } =
+    e { structLitFields = renameType f fields, structLitTy = renameType f ty }
+  renameType f e @ VariantLit { variantLitVal = val, variantLitTy = ty } =
+    e { variantLitVal = renameType f val, variantLitTy = renameType f ty }
+  renameType f e @ ArrayLit { arrayLitVals = vals, arrayLitTy = ty } =
+    e { arrayLitVals = renameType f vals, arrayLitTy = renameType f ty }
+  renameType f e @ NumLit { numLitTy = ty } =
+    e { numLitTy = renameType f ty }
+  renameType f (LValue l) = LValue (renameType f l)
+  renameType _ e = e
+
+instance RenameType Typename LValue where
+  renameType f lval @ Index { idxVal = inner } =
+    lval { idxVal = renameType f inner }
+  renameType f lval @ Field { fieldVal = inner } =
+    lval { fieldVal = renameType f inner }
+  renameType f lval @ Form { formVal = inner } =
+    lval { formVal = renameType f inner }
+  renameType f lval @ Deref { derefVal = inner } =
+    lval { derefVal = renameType f inner }
+  renameType _ lval = lval
+
+instance RenameType Typename Transfer where
+  renameType f tr @ Case { caseVal = val } = tr { caseVal = renameType f val  }
+  renameType f tr @ Ret { retVal = val } = tr { retVal = renameType f val }
+  renameType _ tr = tr
+
+instance Rename Id Exp where
+  rename f e @ Binop { binopLeft = left, binopRight = right } =
+    e { binopLeft = rename f left, binopRight = rename f right }
+  rename f e @ Call { callFunc = func, callArgs = args } =
+    e { callFunc = rename f func, callArgs = rename f args }
+  rename f e @ Conv { convVal = val } = e { convVal = rename f val }
+  rename f e @ Cast { castVal = val } = e { castVal = rename f val }
+  rename f e @ Unop { unopVal = val } = e { unopVal = rename f val }
+  rename f e @ AddrOf { addrofVal = val } = e { addrofVal = rename f val }
+  rename f e @ StructLit { structLitFields = fields } =
+    e { structLitFields = rename f fields }
+  rename f e @ VariantLit { variantLitVal = val } =
+    e { variantLitVal = rename f val }
+  rename f e @ ArrayLit { arrayLitVals = vals } =
+    e { arrayLitVals = rename f vals }
+  rename f (LValue l) = LValue (rename f l)
+  rename _ e = e
+
+instance Rename Id LValue where
+  rename f lval @ Index { idxVal = inner } = lval { idxVal = rename f inner }
+  rename f lval @ Field { fieldVal = inner } =
+    lval { fieldVal = rename f inner }
+  rename f lval @ Form { formVal = inner } =
+    lval { formVal = rename f inner }
+  rename f lval @ Deref { derefVal = inner } =
+    lval { derefVal = rename f inner }
+  rename f lval @ Var { varName = name } = lval { varName = f name }
+  rename _ lval = lval
+
+instance Rename Id Transfer where
+  rename f tr @ Case { caseVal = val } = tr { caseVal = rename f val  }
+  rename f tr @ Ret { retVal = val } = tr { retVal = rename f val }
+  rename _ tr = tr
+
 instance Format Label where
   format (Label l) = "L" <> l
 
 instance Format Fieldname where
   format (Fieldname f) = "f" <> f
+
+instance Format Variantname where
+  format (Variantname v) = "v" <> v
 
 instance Format Id where
   format (Id v) = "%" <> v
@@ -1076,17 +1203,17 @@ instance Graph gr => Format (Module gr) where
                       format "to", formatType ty ])
       formatExp (AddrOf l) = "addrof" <+> formatLValue l
       formatExp (LValue l) = formatLValue l
-      formatExp (StructConst ty fields) =
+      formatExp (StructLit ty fields) =
         let
           headerdoc = "const" <+> formatType ty
         in
           braceBlock headerdoc (punctuate comma (map formatExp (elems fields)))
-      formatExp (ArrayConst ty inits) =
+      formatExp (ArrayLit ty inits) =
         let
           headerdoc = "const" <+> formatType ty
         in
           braceBlock headerdoc (punctuate comma (map formatExp inits))
-      formatExp (NumConst ty n) = hang (formatType ty) 2 (format n)
+      formatExp (NumLit ty n) = hang (formatType ty) 2 (format n)
 
       formatLValue :: LValue -> Doc
       formatLValue (Deref e) = "*" <+> formatExp e
@@ -1170,6 +1297,9 @@ instance Show Label where
 
 instance Show Fieldname where
   show (Fieldname f) = "f" ++ show f
+
+instance Show Variantname where
+  show (Variantname v) = "v" ++ show v
 
 instance Show Id where
   show (Id v) = "%" ++ show v
