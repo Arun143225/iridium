@@ -27,12 +27,10 @@ module IR.Common.Ptr(
        Mobility(..),
        PtrClass(..),
        Mutability(..),
-
-       -- * Utility Functions
-       mergeMutability
        ) where
 
 import Data.Hashable
+import Data.Monoid
 import Data.Word
 import Text.Format
 
@@ -55,7 +53,7 @@ data Ptr
   | Native {
       -- | The mutability of the pointed-to data.
       nativeMutability :: !Mutability,
-      -- | The underlying element type.      
+      -- | The underlying element type.
       nativeTy :: nativetype
     }
     deriving (Eq, Ord)
@@ -86,8 +84,7 @@ data PtrClass =
   -- during a collection cycle.
   | Weak
   -- | A finalizer GC pointer.  When an object is reachable only by
-  -- finalizers, it will result in the finalizer threads becoming
-  -- runnable.
+  -- finalizers, it will result in the finalizer becoming active.
   | Finalizer
   -- | A phantom GC pointer.  These should never be accessed by the
   -- program code, but will prevent an object's deletion during a
@@ -113,32 +110,26 @@ data Mutability =
   | VolatileOnce
     deriving (Eq, Ord, Enum)
 
--- | Given the mutability of a defining struct and a field, decide
--- what the actual mutability is.
-mergeMutability :: Mutability
-                -- ^ The struct's mutability.
-                -> Mutability
-                -- ^ The field's mutability.
-                -> Mutability
-                -- ^ The actual mutability.
+instance Monoid Mutability where
+  mempty = Mutable
 
--- Immutable overrides everything else.
-mergeMutability Immutable _ = Immutable
-mergeMutability _ Immutable = Immutable
--- VolatileOnce overrides everything else after immutability.
-mergeMutability VolatileOnce _ = VolatileOnce
-mergeMutability _ VolatileOnce = VolatileOnce
--- Volatile and WriteOnce combine into VolatileOnce
-mergeMutability Volatile WriteOnce = VolatileOnce
-mergeMutability WriteOnce Volatile = VolatileOnce
--- After immutability, volatility is strongest.
-mergeMutability Volatile _ = Volatile
-mergeMutability _ Volatile = Volatile
--- Writeonce is weaker than volatility.
-mergeMutability WriteOnce _ = WriteOnce
-mergeMutability _ WriteOnce = WriteOnce
--- Mutable carries no information
-mergeMutability Mutable Mutable = Mutable
+  -- Immutable overrides everything else.
+  mappend Immutable _ = Immutable
+  mappend _ Immutable = Immutable
+  -- VolatileOnce overrides everything else after immutability.
+  mappend VolatileOnce _ = VolatileOnce
+  mappend _ VolatileOnce = VolatileOnce
+  -- Volatile and WriteOnce combine into VolatileOnce
+  mappend Volatile WriteOnce = VolatileOnce
+  mappend WriteOnce Volatile = VolatileOnce
+  -- After immutability, volatility is strongest.
+  mappend Volatile _ = Volatile
+  mappend _ Volatile = Volatile
+  -- Writeonce is weaker than volatility.
+  mappend WriteOnce _ = WriteOnce
+  mappend _ WriteOnce = WriteOnce
+  -- Mutable carries no information
+  mappend Mutable Mutable = Mutable
 
 instance Hashable Mobility where hashWithSalt s m = s `hashWithSalt` fromEnum m
 instance Hashable PtrClass where hashWithSalt s p = s `hashWithSalt` fromEnum p
@@ -183,17 +174,17 @@ instance (Show gctype, Show nativetype) =>
     "native " ++ show ty ++ " " ++ show mut
 
 instance Format Mobility where
-  format = format . show
+  format = string . show
 
 instance Format PtrClass where
-  format = format . show
+  format = string . show
 
 instance Format Mutability where
-  format = format . show
+  format = string . show
 
 instance (Format gctype, Format nativetype) =>
          Format (Ptr gctype nativetype) where
   format (GC { gcClass = ptrclass, gcTy = ty, gcMutability = mut }) =
-    "gc" <+> show ptrclass <+> format ty <+> format mut
+    string "gc" <+> format ptrclass <+> format ty <+> format mut
   format (Native { nativeTy = ty, nativeMutability = mut }) =
-    "native" <+> format ty <+> format mut
+    string "native" <+> format ty <+> format mut

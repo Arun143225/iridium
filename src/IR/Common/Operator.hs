@@ -84,7 +84,7 @@ instance Show Binop where
   show FULt = "fult"
 
 instance Format Unop where
-  format = format . show
+  format = string . show
 
 instance Format Binop where
-  format = format . show
+  format = string . show

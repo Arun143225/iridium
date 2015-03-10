@@ -18,14 +18,14 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 
 -- | This module defines the FlatIR language.
--- 
+--
 -- FlatIR is a simply-typed flat-scoped intermediate language.  It
 -- is designed to be reasonably close to LLVM, with instructions
 -- similar to LLVM's, but without some of the difficulties of LLVM.
--- 
+--
 -- At the moment, the FlatIR language is under revision, and will
 -- probably change quite a bit.
--- 
+--
 -- Things that need to be done:
 --   * Add notions of vtables and lookups to the language
 --   * Add variant types
@@ -85,6 +85,7 @@ import Data.Maybe
 import Data.Interval(Intervals)
 import Data.Pos
 import Data.Word
+import IR.Common.Names
 import IR.Common.Ptr
 import IR.Common.Operator
 import IR.Common.Rename
@@ -175,7 +176,7 @@ data Type =
       idPos :: !Pos
     }
   -- | Floating point types
-  | FloatType { 
+  | FloatType {
       -- | The size of the float in bits.
       floatSize :: !Word,
       -- | The position in source from which this arises.
@@ -183,119 +184,6 @@ data Type =
     }
   -- | The unit type, equivalent to SML unit and C/Java void
   | UnitType !Pos
-
--- | A label, indexes blocks
-newtype Label = Label Node
-  deriving (Ord, Eq, Ix)
-
--- | An identifier, indexes variables
-newtype Id = Id Word
-  deriving (Ord, Eq, Ix)
-
--- | A field name, indexes fields
-newtype Fieldname = Fieldname Word
-  deriving (Ord, Eq, Ix)
-
--- | A variant name, indexes fields
-newtype Variantname = Variantname Word
-  deriving (Ord, Eq, Ix)
-
--- | A type name, indexes types
-newtype Typename = Typename Word
-  deriving (Ord, Eq, Ix)
-
--- | A function name, indexes functions
-newtype Globalname = Globalname Word
-  deriving (Ord, Eq, Ix)
-
--- | A header given to GCAlloc representing the type being allocated
-newtype GCHeader = GCHeader Word
-  deriving (Ord, Eq, Ix)
-
--- | Transfers.  These represent methods of leaving a basic block.
--- All basic blocks end in a transfer.
-data Transfer =
-  -- | A direct jump
-    Goto {
-      -- | The jump target.
-      gotoLabel :: !Label,
-      -- | The position in source from which this arises.
-      gotoPos :: !Pos
-    }
-  -- | A (integer) case expression
-  | Case {
-      -- | The value being decided upon.  Must be an integer value.
-      caseVal :: Exp,
-      -- | The cases.  There must be at least one case.
-      caseCases :: [(Integer, Label)],
-      -- | The default case.
-      caseDefault :: !Label,
-      -- | The position in source from which this arises.
-      casePos :: !Pos
-    }
-  -- | A return
-  | Ret { 
-      -- | The return value, if one exists.
-      retVal :: Maybe Exp,
-      -- | The position in source from which this arises.
-      retPos :: !Pos
-    }
-  -- | An unreachable instruction, usually following a call with no
-  -- return
-  | Unreachable !Pos
-
--- | An assignable value
-data LValue =
-  -- | An array (or pointer) index
-    Index {
-      -- | The indexed value.  Must be an array.
-      idxVal :: Exp,
-      -- | The index value.  Must be an integer type.
-      idxIndex :: Exp,
-      -- | The position in source from which this arises.
-      idxPos :: !Pos
-    }
-  -- | A field in a structure
-  | Field {
-      -- | The value whose field is being accessed.  Must be a
-      -- structure type.
-      fieldVal :: Exp,
-      -- | The name of the field being accessed.
-      fieldName :: !Fieldname,
-      -- | The position in source from which this arises.
-      fieldPos :: !Pos
-    }
-  -- | A form of a variant
-  | Form {
-      -- | The value whose field is being accessed.  Must be a
-      -- structure type.
-      formVal :: Exp,
-      -- | The name of the field being accessed.
-      formName :: !Variantname,
-      -- | The position in source from which this arises.
-      formPos :: !Pos
-    }
-  -- | Dereference a pointer
-  | Deref {
-      -- | The value being dereferenced.  Must be a pointer type.
-      derefVal :: Exp,
-      -- | The position in source from which this arises.
-      derefPos :: !Pos
-    }
-  -- | A local value (local variable or argument)
-  | Var {
-      -- | The name of the local value.
-      varName :: !Id,
-      -- | The position in source from which this arises.
-      varPos :: !Pos
-    }
-  -- | A global value (global variable or function)
-  | Global {
-      -- | The name of the global value.
-      globalName :: !Globalname,
-      -- | The position in source from which this arises.
-      globalPos :: !Pos
-    }
 
 -- | An expression
 data Exp =
@@ -376,7 +264,7 @@ data Exp =
       -- | The literal's inner value.
       variantLitVal :: Exp,
       -- | The position in source from which this arises.
-      variantLitPos :: !Pos      
+      variantLitPos :: !Pos
     }
   -- | An array literal
   | ArrayLit {
@@ -399,82 +287,6 @@ data Exp =
     }
   -- | An LValue
   | LValue !LValue
-
--- | A statement.  Represents an effectful action for the statement
--- form of the IR.
-data Stm =
-  -- | Update the given lvalue
-    Move {
-      -- | The destination LValue.
-      moveDst :: LValue,
-      -- | The source expression.
-      moveSrc :: Exp,
-      -- | The position in source from which this originates.
-      movePos :: !Pos
-    }
-  -- | Execute an expression
-  | Do !Exp
-
--- | A binding.  Represents an SSA binding in the SSA form of the
--- language.
-data Bind =
-    -- | A Phi-node.
-    Phi {
-      -- | The name being bound.
-      phiName :: !Id,
-      -- | A map from inbound edges to values
-      phiVals :: Map Label Exp,
-      -- | The position in source from which this arises.
-      phiPos :: !Pos
-    }
-    -- | A regular binding
-  | Bind {
-      -- | The name being bound.
-      bindName :: !Id,
-      -- | The value beind bound.
-      bindVal :: Exp,
-      -- | The position in source from which this originates.
-      bindPos :: !Pos
-    }
-    -- | Execute an expression for its effect only.  Analogous to Do
-    -- in the statement language.
-  | Effect !Exp
-
--- | A basic block
-data Block elem =
-    Block {
-      -- | The statements in the basic block
-      blockBody :: [elem],
-      -- | The transfer for the basic block
-      blockXfer :: Transfer,
-      -- | The position in source from which this arises.
-      blockPos :: !Pos
-    }
-
--- There is no straightforward ordering, equality, or hashing on the
--- remaining types.
-
--- | The body of a function
-data Body elem gr =
-    Body {
-      -- | The entry block
-      bodyEntry :: !Label,
-      -- | The CFG
-      bodyCFG :: (gr (Block elem) ())
-    }
-
--- | A datatype encoding the various names of a global declaration.
-data DeclNames =
-  DeclNames {
-    -- | The basic name of the declaration.
-    basicName :: !String,
-    -- | The linkage name of the declaration (often encodes type
-    -- information, as in C++)
-    linkageName :: !String,
-    -- | The displayed name of the declaration (usually contains type
-    -- information).
-    displayName :: !String
-  }
 
 -- | A global value.  Represents a global variable or a function.
 data Global elem gr =
@@ -521,7 +333,7 @@ data Module elem gr =
       -- | Generated GC types (this module will generate the signatures
       -- and accessors)
       modGenGCs :: [GCHeader],
-      -- | A map from global names to the corresponding functions
+      -- | A map from global names to the corresponding definitions
       modGlobals :: Array Globalname (Global elem gr),
       -- | The position in source from which this arises.  This is here
       -- solely to record filenames in a unified way.
@@ -553,20 +365,6 @@ instance Eq Type where
   FloatType { floatSize = size1 } == FloatType { floatSize = size2 } =
     size1 == size2
   (UnitType _) == (UnitType _) = True
-  _ == _ = False
-
-instance Eq LValue where
-  Index { idxVal = val1, idxIndex = idx1 } ==
-    Index { idxVal = val2, idxIndex = idx2 } = val1 == val2 && idx1 == idx2
-  Field { fieldVal = val1, fieldName = name1 } ==
-    Field { fieldVal = val2, fieldName = name2 } = val1 == val2 && name1 == name2
-  Form { formVal = val1, formName = name1 } ==
-    Form { formVal = val2, formName = name2 } =
-    val1 == val2 && name1 == name2
-  Deref { derefVal = val1 } == Deref { derefVal = val2 } = val1 == val2
-  Var { varName = name1 } == Var { varName = name2 } = name1 == name2
-  Global { globalName = name1 } == Global { globalName = name2 } =
-    name1 == name2
   _ == _ = False
 
 instance Eq Exp where
@@ -602,38 +400,6 @@ instance Eq Exp where
     ty1 == ty2 && val1 == val2
   (LValue lval1) == (LValue lval2) = lval1 == lval2
   _ == _ = False
-
-instance Eq Stm where
-  Move { moveSrc = src1, moveDst = dst1 } ==
-    Move { moveSrc = src2, moveDst = dst2 } = src1 == src2 && dst1 == dst2
-  (Do exp1) == (Do exp2) = exp1 == exp2
-  _ == _ = False
-
-instance Eq Bind where
-  Phi { phiName = name1, phiVals = vals1 } ==
-    Phi { phiName = name2, phiVals = vals2 } =
-    name1 == name2 && vals1 == vals2
-  Bind { bindName = name1, bindVal = val1 } ==
-    Bind { bindName = name2, bindVal = val2 } =
-    name1 == name2 && val1 == val2
-  (Effect e1) == (Effect e2) = e1 == e2
-  _ == _ = False
-
-instance Eq Transfer where
-  Goto { gotoLabel = label1 } == Goto { gotoLabel = label2 } = label1 == label2
-  Case { caseVal = val1, caseCases = cases1, caseDefault = def1 } ==
-    Case { caseVal = val2, caseCases = cases2, caseDefault = def2 } =
-    val1 == val2 && cases1 == cases2 && def1 == def2
-  Ret { retVal = ret1 } == Ret { retVal = ret2 } = ret1 == ret2
-  Unreachable _ == Unreachable _ = True
-  _ == _ = False
-
-instance Eq1 Block where
-  Block { blockBody = body1, blockXfer = xfer1 } ==#
-    Block { blockBody = body2, blockXfer = xfer2 } =
-    xfer1 == xfer2 && (body1 == body2)
-
-instance Eq elem => Eq (Block elem) where (==) = (==#)
 
 instance Ord Type where
   compare FuncType { funcTyRetTy = retty1, funcTyArgTys = params1 }
@@ -686,38 +452,6 @@ instance Ord Type where
   compare FloatType {} _ = LT
   compare _ FloatType {} = GT
   compare (UnitType _) (UnitType _) = EQ
-
-instance Ord LValue where
-  compare Index { idxVal = val1, idxIndex = idx1 }
-          Index { idxVal = val2, idxIndex = idx2 } =
-    case compare idx1 idx2 of
-      EQ -> compare val1 val2
-      out -> out
-  compare Index {} _ = LT
-  compare _ Index {} = GT
-  compare Field { fieldVal = val1, fieldName = name1 }
-          Field { fieldVal = val2, fieldName = name2 } =
-    case compare name1 name2 of
-      EQ -> compare val1 val2
-      out -> out
-  compare Field {} _ = LT
-  compare _ Field {} = GT
-  compare Form { formVal = val1, formName = name1 }
-          Form { formVal = val2, formName = name2 } =
-    case compare name1 name2 of
-      EQ -> compare val1 val2
-      out -> out
-  compare Form {} _ = LT
-  compare _ Form {} = GT
-  compare Deref { derefVal = val1 } Deref { derefVal = val2 } =
-    compare val1 val2
-  compare Deref {} _ = LT
-  compare _ Deref {} = GT
-  compare Var { varName = name1 } Var { varName = name2 } = compare name1 name2
-  compare Var {} _ = LT
-  compare _ Var {} = GT
-  compare Global { globalName = name1 } Global { globalName = name2 } =
-    compare name1 name2
 
 instance Ord Exp where
   compare (GCAlloc _ _ _) _ = error "GCAlloc is going away"
@@ -797,125 +531,6 @@ instance Ord Exp where
   compare _ NumLit {} = GT
   compare (LValue lval1) (LValue lval2) = compare lval1 lval2
 
-instance Ord Stm where
-  compare Move { moveSrc = src1, moveDst = dst1 }
-          Move { moveSrc = src2, moveDst = dst2 } =
-    case compare src1 src2 of
-      EQ -> compare dst1 dst2
-      out -> out
-  compare (Move {}) _ = LT
-  compare _ (Move {}) = GT
-  compare (Do exp1) (Do exp2) = compare exp1 exp2
-
-instance Ord Bind where
-  compare Phi { phiName = name1, phiVals = vals1 }
-          Phi { phiName = name2, phiVals = vals2 } =
-    case compare name1 name2 of
-      EQ -> compare vals1 vals2
-      out -> out
-  compare Phi {} _ = LT
-  compare _ Phi {} = GT
-  compare Bind { bindName = name1, bindVal = val1 }
-          Bind { bindName = name2, bindVal = val2 } =
-    case compare name1 name2 of
-      EQ -> compare val1 val2
-      out -> out
-  compare Bind {} _ = LT
-  compare _ Bind {} = GT
-  compare (Effect e1) (Effect e2) = compare e1 e2
-
-instance Ord Transfer where
-  compare Goto { gotoLabel = label1 } Goto { gotoLabel = label2 } =
-    compare label1 label2
-  compare Goto {} _ = LT
-  compare _ Goto {} = GT
-  compare Case { caseVal = val1, caseCases = cases1, caseDefault = def1 }
-          Case { caseVal = val2, caseCases = cases2, caseDefault = def2 } =
-    case compare val1 val2 of
-      EQ -> case compare def1 def2 of
-        EQ -> compare cases1 cases2
-        out -> out
-      out -> out
-  compare Case {} _ = LT
-  compare _ Case {} = GT
-  compare Ret { retVal = ret1 } Ret { retVal = ret2 } = compare ret1 ret2
-  compare Ret {} _ = LT
-  compare _ Ret {} = GT
-  compare (Unreachable _) (Unreachable _) = EQ
-
-instance Ord1 Block where
-  compare1 Block { blockBody = body1, blockXfer = xfer1 }
-           Block { blockBody = body2, blockXfer = xfer2 } =
-    case compare xfer1 xfer2 of
-      EQ -> compare1 body1 body2
-      out -> out
-
-instance Ord elem => Ord (Block elem) where compare = compare1
-
-instance Position Type where
-  pos FuncType { funcTyPos = p } = p
-  pos StructType { structPos = p } = p
-  pos VariantType { variantPos = p } = p
-  pos ArrayType { arrayPos = p } = p
-  pos PtrType { ptrPos = p } = p
-  pos IntType { intPos = p } = p
-  pos IdType { idPos = p } = p
-  pos FloatType { floatPos = p } = p
-  pos (UnitType p) = p
-
-instance Position Exp where
-  pos Binop { binopPos = p } = p
-  pos Call { callPos = p } = p
-  pos Conv { convPos = p } = p
-  pos Cast { castPos = p } = p
-  pos Unop { unopPos = p } = p
-  pos AddrOf { addrofPos = p } = p
-  pos StructLit { structLitPos = p } = p
-  pos VariantLit { variantLitPos = p } = p
-  pos ArrayLit { arrayLitPos = p } = p
-  pos NumLit { numLitPos = p } = p
-  pos (LValue l) = pos l
-  pos (GCAlloc _ _ _) = error "GCAlloc is going away"
-
-instance Position LValue where
-  pos Index { idxPos = p } = p
-  pos Field { fieldPos = p } = p
-  pos Form { formPos = p } = p
-  pos Deref { derefPos = p } = p
-  pos Var { varPos = p } = p
-  pos Global { globalPos = p } = p
-
-instance Position Transfer where
-  pos Goto { gotoPos = p } = p
-  pos Case { casePos = p } = p
-  pos Ret { retPos = p } = p
-  pos (Unreachable p) = p
-
-instance Position Stm where
-  pos Move { movePos = p } = p
-  pos (Do expr) = pos expr
-
-instance Position Bind where
-  pos Phi { phiPos = p } = p
-  pos Bind { bindPos = p } = p
-  pos (Effect e) = pos e
-
-instance Position (Block elem) where
-  pos Block { blockPos = p } = p
-
-instance Position (Global elem gr) where
-  pos Function { funcPos = p } = p
-  pos GlobalVar { gvarPos = p } = p
-
-instance Position (Module elem gr) where
-  pos Module { modPos = p } = p
-
-instance Hashable Typename where
-  hashWithSalt s (Typename n) = s `hashWithSalt` n
-
-instance Hashable GCHeader where
-  hashWithSalt s (GCHeader n) = s `hashWithSalt` n
-
 instance Hashable Type where
   hashWithSalt s FuncType { funcTyRetTy = retty, funcTyArgTys = params } =
     s `hashWithSalt` (0 :: Word) `hashWithSalt` retty `hashWithSalt` params
@@ -939,30 +554,6 @@ instance Hashable Type where
   hashWithSalt s FloatType { floatSize = size } =
     s `hashWithSalt` (7 :: Word) `hashWithSalt` size
   hashWithSalt s UnitType {} = s `hashWithSalt` (7 :: Word)
-
-instance Hashable Transfer where
-  hashWithSalt s Goto { gotoLabel = label } =
-    s `hashWithSalt` (1 :: Word) `hashWithSalt` label
-  hashWithSalt s Case { caseVal = val, caseCases = cases, caseDefault = def } =
-    s `hashWithSalt` (2 :: Word) `hashWithSalt`
-      val `hashWithSalt` cases `hashWithSalt` def
-  hashWithSalt s Ret { retVal = val } =
-    s `hashWithSalt` (3 :: Word) `hashWithSalt` val
-  hashWithSalt s (Unreachable _) = s `hashWithSalt` (4 :: Word)
-
-instance Hashable LValue where
-  hashWithSalt s Index { idxVal = val, idxIndex = idx } =
-    s `hashWithSalt` (1 :: Word) `hashWithSalt` val `hashWithSalt` idx
-  hashWithSalt s Field { fieldVal = val, fieldName = name } =
-    s `hashWithSalt` (2 :: Word) `hashWithSalt` val `hashWithSalt` name
-  hashWithSalt s Form { formVal = val, formName = name } =
-    s `hashWithSalt` (3 :: Word) `hashWithSalt` val `hashWithSalt` name
-  hashWithSalt s Deref { derefVal = val } =
-    s `hashWithSalt` (4 :: Word) `hashWithSalt`val
-  hashWithSalt s Var { varName = name } =
-    s `hashWithSalt` (5 :: Word) `hashWithSalt` name
-  hashWithSalt s Global { globalName = name } =
-    s `hashWithSalt` (6 :: Word) `hashWithSalt` name
 
 instance Hashable Exp where
   hashWithSalt s Binop { binopOp = op, binopLeft = left, binopRight = right } =
@@ -991,41 +582,6 @@ instance Hashable Exp where
   hashWithSalt s (LValue lval) =
     s `hashWithSalt` (11 :: Word) `hashWithSalt` lval
   hashWithSalt _ (GCAlloc _ _ _) = error "GCAlloc is going away"
-
-instance Hashable Stm where
-  hashWithSalt s Move { moveSrc = src, moveDst = dst } = 
-    s `hashWithSalt` (1 :: Word) `hashWithSalt` src `hashWithSalt` dst
-  hashWithSalt s (Do val) = s `hashWithSalt` (2 :: Word) `hashWithSalt` val
-
-instance Hashable Bind where
-  hashWithSalt s Phi { phiName = name1, phiVals = vals1 } =
-    s `hashWithSalt` (1 :: Word) `hashWithSalt` name1 `hashWithSalt` vals1
-  hashWithSalt s Bind { bindName = name1, bindVal = val1 } =
-    s `hashWithSalt` (2 :: Word) `hashWithSalt` name1 `hashWithSalt` val1
-  hashWithSalt s (Effect e1) =
-    s `hashWithSalt` (3 :: Word) `hashWithSalt` e1
-
-instance Hashable1 Block where
-  hashWithSalt1 s Block { blockBody = body, blockXfer = xfer } =
-    (s `hashWithSalt` xfer) `hashWithSalt1` body
-
-instance Hashable elem => Hashable (Block elem) where
-  hashWithSalt = hashWithSalt1
-
-instance Hashable Label where
-  hashWithSalt s (Label node) = s `hashWithSalt` node
-
-instance Hashable Id where
-  hashWithSalt s (Id name) = s `hashWithSalt` name
-
-instance Hashable Globalname where
-  hashWithSalt s (Globalname name) = s `hashWithSalt` name
-
-instance Hashable Fieldname where
-  hashWithSalt s (Fieldname name) = s `hashWithSalt` name
-
-instance Hashable Variantname where
-  hashWithSalt s (Variantname name) = s `hashWithSalt` name
 
 instance RenameType Typename Type where
   renameType f ty @ FuncType { funcTyRetTy = retty, funcTyArgTys = argtys } =
@@ -1064,22 +620,6 @@ instance RenameType Typename Exp where
   renameType f (LValue l) = LValue (renameType f l)
   renameType _ e = e
 
-instance RenameType Typename LValue where
-  renameType f lval @ Index { idxVal = inner } =
-    lval { idxVal = renameType f inner }
-  renameType f lval @ Field { fieldVal = inner } =
-    lval { fieldVal = renameType f inner }
-  renameType f lval @ Form { formVal = inner } =
-    lval { formVal = renameType f inner }
-  renameType f lval @ Deref { derefVal = inner } =
-    lval { derefVal = renameType f inner }
-  renameType _ lval = lval
-
-instance RenameType Typename Transfer where
-  renameType f tr @ Case { caseVal = val } = tr { caseVal = renameType f val  }
-  renameType f tr @ Ret { retVal = val } = tr { retVal = renameType f val }
-  renameType _ tr = tr
-
 instance Rename Id Exp where
   rename f e @ Binop { binopLeft = left, binopRight = right } =
     e { binopLeft = rename f left, binopRight = rename f right }
@@ -1098,36 +638,6 @@ instance Rename Id Exp where
   rename f (LValue l) = LValue (rename f l)
   rename _ e = e
 
-instance Rename Id LValue where
-  rename f lval @ Index { idxVal = inner } = lval { idxVal = rename f inner }
-  rename f lval @ Field { fieldVal = inner } =
-    lval { fieldVal = rename f inner }
-  rename f lval @ Form { formVal = inner } =
-    lval { formVal = rename f inner }
-  rename f lval @ Deref { derefVal = inner } =
-    lval { derefVal = rename f inner }
-  rename f lval @ Var { varName = name } = lval { varName = f name }
-  rename _ lval = lval
-
-instance Rename Id Transfer where
-  rename f tr @ Case { caseVal = val } = tr { caseVal = rename f val  }
-  rename f tr @ Ret { retVal = val } = tr { retVal = rename f val }
-  rename _ tr = tr
-
-instance Format Label where
-  format (Label l) = "L" <> l
-
-instance Format Fieldname where
-  format (Fieldname f) = "f" <> f
-
-instance Format Variantname where
-  format (Variantname v) = "v" <> v
-
-instance Format Id where
-  format (Id v) = "%" <> v
-
-instance Format Globalname where
-  format (Globalname g) = "@" <> g 
 {-
 -- This mess is a good example of what I mean about format and a
 -- naming function.
@@ -1305,7 +815,7 @@ instance Show Id where
   show (Id v) = "%" ++ show v
 
 instance Show Globalname where
-  show (Globalname g) = "@" ++ show g 
+  show (Globalname g) = "@" ++ show g
 {-
 instance Graph gr => Show (Module gr) where
   show = show . format

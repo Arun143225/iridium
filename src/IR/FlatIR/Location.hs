@@ -16,5 +16,18 @@
 -- 02110-1301 USA
 {-# OPTIONS_GHC -funbox-strict-fields -Wall -Werror #-}
 
-module IR.SimpleIR.Syntax(
+-- | This module defines Locations.  These are used to represent how
+-- to get at values during compilation.
+module IR.FlatIR.Location(
        ) where
+
+-- | Locations are stored in ValMaps to indicate how a given variable
+-- is represented.
+data Location =
+  -- | A variable stored in an SSA binding
+    BindLoc !LLVM.ValueRef
+  -- | A variable stored in a memory location
+  | MemLoc Type !Mutability !LLVM.ValueRef
+  -- | A value located in a 
+  | StructLoc !(UArray Fieldname Word)
+  -- | A variant, which refers to 
