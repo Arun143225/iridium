@@ -15,19 +15,30 @@
 -- Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
 -- 02110-1301 USA
 {-# OPTIONS_GHC -funbox-strict-fields -Wall -Werror #-}
-{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE MultiParamTypeClasses, FlexibleInstances, FlexibleContexts #-}
 
 module IR.Common.Body(
        Body(..),
        Block(..),
        Stm(..),
+       Phi(..),
        Bind(..),
        SSAElems,
        StmElems
        ) where
 
+import Data.Hashable
+import Data.Hashable.Extras
+import Data.Map(Map)
+import Data.Position
 import IR.Common.LValue
 import IR.Common.Names
+import IR.Common.Transfer
+import Prelude.Extras
+import Text.Format
+import Text.FormatM
+
+import qualified Data.Map as Map
 
 -- | A statement.  Represents an effectful action for the statement
 -- form of the IR.
@@ -35,7 +46,7 @@ data Stm exp =
   -- | Update the given lvalue
     Move {
       -- | The destination LValue.
-      moveDst :: !LValue,
+      moveDst :: !(LValue exp),
       -- | The source expression.
       moveSrc :: !exp,
       -- | The position in source from which this originates.
@@ -103,8 +114,8 @@ instance Eq1 Stm where
   (Do exp1) ==# (Do exp2) = exp1 == exp2
   _ ==# _ = False
 
-instance Eq1 Phi where
-  Phi { phiName = name1, phiVals = vals1 } ==#
+instance Eq Phi where
+  Phi { phiName = name1, phiVals = vals1 } ==
     Phi { phiName = name2, phiVals = vals2 } =
     name1 == name2 && vals1 == vals2
 
@@ -115,15 +126,14 @@ instance Eq1 Bind where
   (Effect e1) ==# (Effect e2) = e1 == e2
   _ ==# _ = False
 
-instance Eq1 Block where
-  Block { blockBody = body1, blockXfer = xfer1 } ==#
+instance Eq2 Block where
+  Block { blockBody = body1, blockXfer = xfer1 } ==##
     Block { blockBody = body2, blockXfer = xfer2 } =
     xfer1 == xfer2 && (body1 == body2)
 
-instance Eq exp => Eq (Phi exp) where (==) = (==#)
 instance Eq exp => Eq (Bind exp) where (==) = (==#)
 instance Eq exp => Eq (Stm exp) where (==) = (==#)
-instance Eq elem => Eq (Block elem) where (==) = (==#)
+instance (Eq elems, Eq exp) => Eq (Block elems exp) where (==) = (==##)
 
 instance Ord1 Stm where
   compare1 Move { moveSrc = src1, moveDst = dst1 }
@@ -135,8 +145,8 @@ instance Ord1 Stm where
   compare1 _ (Move {}) = GT
   compare1 (Do exp1) (Do exp2) = compare exp1 exp2
 
-instance Ord1 Phi where
-  compare1 Phi { phiName = name1, phiVals = vals1 }
+instance Ord Phi where
+  compare Phi { phiName = name1, phiVals = vals1 }
           Phi { phiName = name2, phiVals = vals2 } =
     case compare name1 name2 of
       EQ -> compare vals1 vals2
@@ -152,94 +162,92 @@ instance Ord1 Bind where
   compare1 _ Bind {} = GT
   compare1 (Effect e1) (Effect e2) = compare e1 e2
 
-instance Ord1 Block where
-  compare1 Block { blockBody = body1, blockXfer = xfer1 }
+instance Ord2 Block where
+  compare2 Block { blockBody = body1, blockXfer = xfer1 }
            Block { blockBody = body2, blockXfer = xfer2 } =
     case compare xfer1 xfer2 of
-      EQ -> compare1 body1 body2
+      EQ -> compare body1 body2
       out -> out
 
-instance Ord exp => Ord (Phi exp) where compare = compare1
 instance Ord exp => Ord (Bind exp) where compare = compare1
 instance Ord exp => Ord (Stm exp) where compare = compare1
-instance Ord elem => Ord (Block elem) where compare = compare1
+instance (Ord exp, Ord elem) => Ord (Block elem exp) where compare = compare2
 
 instance Hashable1 Stm where
   hashWithSalt1 s Move { moveSrc = src, moveDst = dst } =
-    s `hashWithSalt` (1 :: Word) `hashWithSalt` src `hashWithSalt` dst
-  hashWithSalt1 s (Do val) = s `hashWithSalt` (2 :: Word) `hashWithSalt` val
+    s `hashWithSalt` (1 :: Int) `hashWithSalt` src `hashWithSalt` dst
+  hashWithSalt1 s (Do val) = s `hashWithSalt` (2 :: Int) `hashWithSalt` val
 
-instance Hashable1 Phi where
-  hashWithSalt1 s Phi { phiName = name1, phiVals = vals1 } =
-    s `hashWithSalt` name1 `hashWithSalt` vals1
+instance Hashable Phi where
+  hashWithSalt s Phi { phiName = name, phiVals = vals } =
+    s `hashWithSalt` name `hashWithSalt` (Map.toList vals)
 
 instance Hashable1 Bind where
   hashWithSalt1 s Bind { bindName = name1, bindVal = val1 } =
-    s `hashWithSalt` (1 :: Word) `hashWithSalt` name1 `hashWithSalt` val1
+    s `hashWithSalt` (1 :: Int) `hashWithSalt` name1 `hashWithSalt` val1
   hashWithSalt1 s (Effect e1) =
-    s `hashWithSalt` (2 :: Word) `hashWithSalt` e1
+    s `hashWithSalt` (2 :: Int) `hashWithSalt` e1
 
-instance Hashable1 Block where
-  hashWithSalt1 s Block { blockBody = body, blockXfer = xfer } =
-    (s `hashWithSalt` xfer) `hashWithSalt1` body
+instance Hashable2 Block where
+  hashWithSalt2 s Block { blockBody = body, blockXfer = xfer } =
+    s `hashWithSalt` xfer `hashWithSalt` body
 
-instance Hashable exp => Hashable (Phi exp) where
-  hashWithSalt = hashWithSalt1
 instance Hashable exp => Hashable (Bind exp) where
   hashWithSalt = hashWithSalt1
 instance Hashable exp => Hashable (Stm exp) where
   hashWithSalt = hashWithSalt1
-instance Hashable elem => Hashable (Block elem) where
-  hashWithSalt = hashWithSalt1
+instance (Hashable exp, Hashable elem) => Hashable (Block elem exp) where
+  hashWithSalt = hashWithSalt2
 
 instance Format exp => Format (Stm exp) where
   format Move { moveDst = dst, moveSrc = src } =
-    format dst <+> "<-" <+> format src
+    format dst <+> string "<-" <+> format src
   format (Do e) = format e
 
-instance Format exp => Format (Phi exp) where
+instance Format Phi where
   format Phi { phiName = name, phiVals = vals } =
     let
-      choicedocs = map (\(l, v) -> l <> colon <+> v) (Map.toList vals)
+      mapfun (l, v) = format l <> colon <+> format v
+      choicedocs = map mapfun (Map.toList vals)
     in
-      format name <+> "<- phi" <+> list choicedocs
+      format name <+> string "<- phi" <+> list choicedocs
 
 instance Format exp => Format (Bind exp) where
-  format Bind { bindDst = dst, bindSrc = src } =
-    format dst <+> "<-" <+> format src
+  format Bind { bindName = dst, bindVal = src } =
+    format dst <+> string "<-" <+> format src
   format (Effect e) = format e
 
 instance Format exp => Format (Block exp ([Phi], [Bind exp])) where
   format Block { blockBody = (phis, binds), blockXfer = xfer } =
-    return $! vcat (map format phis ++ map format binds ++ [format xfer])
+    vcat (map format phis ++ map format binds ++ [format xfer])
 
 instance Format exp => Format (Block exp [Stm exp]) where
   format Block { blockBody = stms, blockXfer = xfer } =
-    return $! vcat (map format stm ++ [format xfer])
+    vcat (map format stms ++ [format xfer])
 
-instance FormatM exp => FormatM (Stm exp) where
+instance FormatM m exp => FormatM m (Stm exp) where
   formatM Move { moveDst = dst, moveSrc = src } =
     do
       dstdoc <- formatM dst
       srcdoc <- formatM src
-      return $! dstdoc <+> "<-" <+> srcdoc
+      return $! dstdoc <+> string "<-" <+> srcdoc
   formatM (Do e) = formatM e
 
-instance FormatM exp => FormatM (Bind exp) where
-  formatM Bind { bindDist = dst, bindSrc = src } =
+instance FormatM m exp => FormatM m (Bind exp) where
+  formatM Bind { bindName = dst, bindVal = src } =
     do
       srcdoc <- formatM src
-      return $! format dst <+> "<-" <+> srcdoc
+      return $! format dst <+> string "<-" <+> srcdoc
   formatM (Effect e) = formatM e
 
-instance FormatM exp => FormatM (Block exp ([Phi], [Bind exp])) where
+instance FormatM m exp => FormatM m (Block exp ([Phi], [Bind exp])) where
   formatM Block { blockBody = (phis, binds), blockXfer = xfer } =
     do
       binddocs <- mapM formatM binds
       xferdoc <- formatM xfer
       return $! vcat (map format phis ++ binddocs ++ [xferdoc])
 
-instance FormatM exp => FormatM (Block exp [Stm exp]) where
+instance FormatM m exp => FormatM m (Block exp [Stm exp]) where
   formatM Block { blockBody = stms, blockXfer = xfer } =
     do
       stmdocs <- mapM formatM stms

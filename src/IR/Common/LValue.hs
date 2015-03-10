@@ -15,12 +15,21 @@
 -- Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
 -- 02110-1301 USA
 {-# OPTIONS_GHC -funbox-strict-fields -Wall -Werror #-}
+{-# LANGUAGE MultiParamTypeClasses, FlexibleContexts, FlexibleInstances #-}
 
 module IR.Common.LValue(
        LValue(..)
        ) where
 
+import Data.Hashable
+import Data.Hashable.Extras
+import Data.Position
 import IR.Common.Names
+import IR.Common.Rename
+import IR.Common.RenameType
+import Prelude.Extras
+import Text.Format
+import Text.FormatM
 
 -- | An assignable value
 data LValue exp =
@@ -128,17 +137,17 @@ instance Ord elem => Ord (LValue elem) where compare = compare1
 
 instance Hashable1 LValue where
   hashWithSalt1 s Index { idxVal = val, idxIndex = idx } =
-    s `hashWithSalt` (1 :: Word) `hashWithSalt` val `hashWithSalt` idx
+    s `hashWithSalt` (1 :: Int) `hashWithSalt` val `hashWithSalt` idx
   hashWithSalt1 s Field { fieldVal = val, fieldName = name } =
-    s `hashWithSalt` (2 :: Word) `hashWithSalt` val `hashWithSalt` name
+    s `hashWithSalt` (2 :: Int) `hashWithSalt` val `hashWithSalt` name
   hashWithSalt1 s Form { formVal = val, formName = name } =
-    s `hashWithSalt` (3 :: Word) `hashWithSalt` val `hashWithSalt` name
+    s `hashWithSalt` (3 :: Int) `hashWithSalt` val `hashWithSalt` name
   hashWithSalt1 s Deref { derefVal = val } =
-    s `hashWithSalt` (4 :: Word) `hashWithSalt`val
+    s `hashWithSalt` (4 :: Int) `hashWithSalt`val
   hashWithSalt1 s Var { varName = name } =
-    s `hashWithSalt` (5 :: Word) `hashWithSalt` name
+    s `hashWithSalt` (5 :: Int) `hashWithSalt` name
   hashWithSalt1 s Global { globalName = name } =
-    s `hashWithSalt` (6 :: Word) `hashWithSalt` name
+    s `hashWithSalt` (6 :: Int) `hashWithSalt` name
 
 instance Hashable elem => Hashable (LValue elem) where
   hashWithSalt = hashWithSalt1
@@ -166,22 +175,32 @@ instance Rename Id exp => Rename Id (LValue exp) where
   rename _ lval = lval
 
 instance Format exp => Format (LValue exp) where
-  format (Index e i) = format e <+> brackets (formatExp i)
-  format (Field (LValue (Deref e)) field) =
-    format e <> "->" <> field
-  format (Field e field) = format e <> "." <> field
-  format Deref { derefVal = e } = "*" <+> format e
+  format Index { idxVal = e, idxIndex = i } = format e <+> brackets (format i)
+  format Form { formVal = e, formName = form } =
+    format e <> char '#' <> format form
+  format Field { fieldVal = e, fieldName = field } =
+    format e <> dot <> format field
+  format Deref { derefVal = e } = string "*" <+> format e
   format Global { globalName = g } = format g
   format Var { varName = v } = format v
 
-instance FormatM exp => FormatM (LValue exp) where
-  formatM (Index e i) = format e <+> brackets (formatExp i)
-  formatM (Field (LValue (Deref e)) field) =
-    format e <> "->" <> field
-  formatM (Field e field) = format e <> "." <> field
+instance FormatM m exp => FormatM m (LValue exp) where
+  formatM Index { idxVal = e, idxIndex = i } =
+    do
+      edoc <- formatM e
+      idoc <- formatM i
+      return $! edoc <+> brackets idoc
+  formatM Field { fieldVal = e, fieldName = field } =
+    do
+      edoc <- formatM e
+      return $! edoc <> dot <> format field
+  formatM Form { formVal = e, formName = form } =
+    do
+      edoc <- formatM e
+      return $! edoc <> char '#' <> format form
   formatM Deref { derefVal = e } =
     do
       edoc <- formatM e
-      return $! "*" <+> edoc
+      return $! string "*" <+> edoc
   formatM Global { globalName = g } = return $! format g
   formatM Var { varName = v } = return $! format v

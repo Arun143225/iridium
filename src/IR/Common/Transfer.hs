@@ -15,13 +15,21 @@
 -- Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
 -- 02110-1301 USA
 {-# OPTIONS_GHC -funbox-strict-fields -Wall -Werror #-}
+{-# LANGUAGE MultiParamTypeClasses, FlexibleInstances, FlexibleContexts #-}
 
 module IR.Common.Transfer(
        Transfer(..)
        ) where
 
+import Data.Hashable
+import Data.Hashable.Extras
+import Data.Position
 import IR.Common.Names
+import IR.Common.Rename
+import IR.Common.RenameType
 import Prelude.Extras
+import Text.Format
+import Text.FormatM
 
 -- | Transfers.  These represent methods of leaving a basic block.
 -- All basic blocks end in a transfer.
@@ -57,7 +65,7 @@ data Transfer exp =
 
 instance Eq1 Transfer where
   Goto { gotoLabel = label1 } ==# Goto { gotoLabel = label2 } = label1 == label2
-  Case { caseVal = val1, caseCases = cases1, caseDefault = def1 } ==
+  Case { caseVal = val1, caseCases = cases1, caseDefault = def1 } ==#
     Case { caseVal = val2, caseCases = cases2, caseDefault = def2 } =
     val1 == val2 && cases1 == cases2 && def1 == def2
   Ret { retVal = ret1 } ==# Ret { retVal = ret2 } = ret1 == ret2
@@ -91,13 +99,13 @@ instance Ord exp => Ord (Transfer exp) where
 
 instance Hashable1 Transfer where
   hashWithSalt1 s Goto { gotoLabel = label } =
-    s `hashWithSalt` (1 :: Word) `hashWithSalt` label
+    s `hashWithSalt` (1 :: Int) `hashWithSalt` label
   hashWithSalt1 s Case { caseVal = val, caseCases = cases, caseDefault = def } =
-    s `hashWithSalt` (2 :: Word) `hashWithSalt`
+    s `hashWithSalt` (2 :: Int) `hashWithSalt`
       val `hashWithSalt` cases `hashWithSalt` def
   hashWithSalt1 s Ret { retVal = val } =
-    s `hashWithSalt` (3 :: Word) `hashWithSalt` val
-  hashWithSalt1 s (Unreachable _) = s `hashWithSalt` (4 :: Word)
+    s `hashWithSalt` (3 :: Int) `hashWithSalt` val
+  hashWithSalt1 s (Unreachable _) = s `hashWithSalt` (4 :: Int)
 
 instance Hashable elem => Hashable (Transfer elem) where
   hashWithSalt = hashWithSalt1
@@ -113,29 +121,31 @@ instance Rename Id exp => Rename Id (Transfer exp) where
   rename _ tr = tr
 
 instance Format exp => Format (Transfer exp) where
-  format Goto { gotoLabel = l } = string "goto" <+> show l
+  format Goto { gotoLabel = l } = string "goto" <+> format l
   format Case { caseVal = e, caseCases = cases, caseDefault = def } =
     let
-      mapfun (i, l) = i <> colon <+> l
-      casesdoc = list ((string "default" <> colon <+> def) : map mapfun cases)
+      mapfun (i, l) = format i <> colon <+> format l
+      casesdoc = list ((string "default" <> colon <+> format def) :
+                       map mapfun cases)
     in
       string "case" <+> align (format e </> casesdoc)
   format Ret { retVal = Just e } = string "ret" <+> format e
   format Ret { retVal = Nothing } = string "ret"
-  format Unreachable = string "Unreachable"
+  format (Unreachable _) = string "Unreachable"
 
-instance FormatM exp => FormatM (Transfer exp) where
-  formatM Goto { gotoLabel = l } = return $! string "goto" <+> show l
+instance FormatM m exp => FormatM m (Transfer exp) where
+  formatM Goto { gotoLabel = l } = return $! string "goto" <+> format l
   formatM Case { caseVal = e, caseCases = cases, caseDefault = def } =
     let
-      mapfun (i, l) = i <> colon <+> l
-      casesdoc = list ((string "default" <> colon <+> def) : map mapfun cases)
-    in
+      mapfun (i, l) = format i <> colon <+> format l
+      casesdoc = list ((string "default" <> colon <+> format def) :
+                       map mapfun cases)
+    in do
       edoc <- formatM e
-      return $! string "case" align (softbreak <> edoc </> casesdoc)
+      return $! string "case" <> align (softbreak <> edoc </> casesdoc)
   formatM Ret { retVal = Just e } =
     do
       edoc <- formatM e
       return $! string "ret" <+> edoc
   formatM Ret { retVal = Nothing } = return $! string "ret"
-  formatM Unreachable = return $! string "Unreachable"
+  formatM (Unreachable _) = return $! string "Unreachable"

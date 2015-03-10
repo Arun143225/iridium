@@ -24,8 +24,14 @@ module IR.Common.Names(
        Variantname,
        Typename,
        Globalname,
-       GCName
+       GCHeader
        ) where
+
+import Data.Array
+import Data.Graph.Inductive.Graph(Node)
+import Data.Hashable
+import Data.Word
+import Text.Format
 
 -- | A datatype encoding the various names of a global declaration.
 data DeclNames =
@@ -42,31 +48,31 @@ data DeclNames =
 
 -- | A label, indexes blocks
 newtype Label = Label Node
-  deriving (Ord, Eq, Ix, Enum)
+  deriving (Ord, Eq, Ix)
 
 -- | An identifier, indexes variables
 newtype Id = Id Word
-  deriving (Ord, Eq, Ix, Enum)
+  deriving (Ord, Eq, Ix)
 
 -- | A field name, indexes fields
 newtype Fieldname = Fieldname Word
-  deriving (Ord, Eq, Ix, Enum)
+  deriving (Ord, Eq, Ix)
 
 -- | A variant name, indexes fields
 newtype Variantname = Variantname Word
-  deriving (Ord, Eq, Ix, Enum)
+  deriving (Ord, Eq, Ix)
 
 -- | A type name, indexes types
 newtype Typename = Typename Word
-  deriving (Ord, Eq, Ix, Enum)
+  deriving (Ord, Eq, Ix)
 
 -- | A function name, indexes functions
 newtype Globalname = Globalname Word
-  deriving (Ord, Eq, Ix, Enum)
+  deriving (Ord, Eq, Ix)
 
 -- | A header given to GCAlloc representing the type being allocated
 newtype GCHeader = GCHeader Word
-  deriving (Ord, Eq, Ix, Enum)
+  deriving (Ord, Eq, Ix)
 
 instance Hashable Label where
   hashWithSalt s (Label node) = s `hashWithSalt` node
@@ -90,16 +96,16 @@ instance Hashable GCHeader where
   hashWithSalt s (GCHeader n) = s `hashWithSalt` n
 
 instance Format Label where
-  format (Label l) = "L" <> l
+  format (Label l) = string "L" <> format l
 
 instance Format Fieldname where
-  format (Fieldname f) = "f" <> f
+  format (Fieldname f) = string "f" <> format f
 
 instance Format Variantname where
-  format (Variantname v) = "v" <> v
+  format (Variantname v) = string "v" <> format v
 
 instance Format Id where
-  format (Id v) = "%" <> v
+  format (Id v) = string "%" <> format v
 
 instance Format Globalname where
-  format (Globalname g) = "@" <> g
+  format (Globalname g) = string "@" <> format g

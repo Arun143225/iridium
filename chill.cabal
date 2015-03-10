@@ -20,12 +20,16 @@ Library
   build-depends:        base, mtl, hashable, fgl, array, prelude-extras,
                         compiler-misc, containers, hashable-extras
   hs-source-dirs:       src
-  other-modules:        IR.Common.Ptr,
+  exposed-modules:      IR.Common.Body
+                        IR.Common.LValue,
+                        IR.Common.Names,
+                        IR.Common.Ptr,
                         IR.Common.Operator,
                         IR.Common.Rename,
                         IR.Common.Rename.Class,
                         IR.Common.RenameType,
                         IR.Common.RenameType.Class
+                        IR.Common.Transfer
 --                        IR.FlatIR.Syntax
 --                        IR.FlatIR.SSAConvert
 --                        IR.FlatIR.LLVMGen
