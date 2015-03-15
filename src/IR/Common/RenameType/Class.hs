@@ -23,6 +23,10 @@ module IR.Common.RenameType.Class(
        RenameType(..)
        ) where
 
+import Data.Array.IArray(IArray, Ix)
+
+import qualified Data.Array.IArray as IArray
+
 -- | Class of things that can have their types alpha-renamed.
 class RenameType typename syntax where
   -- | Rename all typenames in the given syntax construct.
@@ -34,6 +38,13 @@ class RenameType typename syntax where
              -- ^ The input, with the renaming function applied to all
              -- typenames.
 
-instance (RenameType typename syntax, Functor f) =>
-         RenameType typename (f syntax) where
-  renameType f t = fmap (renameType f) t
+instance (RenameType id syntax) => RenameType id (Maybe syntax) where
+  renameType f (Just t) = Just (renameType f t)
+  renameType _ Nothing = Nothing
+
+instance (RenameType id syntax) => RenameType id [syntax] where
+  renameType f = map (renameType f)
+
+instance (RenameType id syntax, Ix idx, IArray arr syntax) =>
+         RenameType id (arr idx syntax) where
+  renameType f = IArray.amap (renameType f)
