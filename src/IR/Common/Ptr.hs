@@ -15,6 +15,7 @@
 -- Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
 -- 02110-1301 USA
 {-# OPTIONS_GHC -funbox-strict-fields -Wall -Werror #-}
+{-# LANGUAGE FlexibleInstances, MultiParamTypeClasses, FlexibleContexts #-}
 
 -- | This module defines type constructors that represent all GC
 -- options.  This allows sharing of GC type metadata amongst the
@@ -33,6 +34,8 @@ import Data.Hashable
 import Data.Monoid
 import Data.Word
 import Text.Format
+import Text.XML.Expat.Pickle hiding (Node)
+import Text.XML.Expat.Tree(NodeG)
 
 -- | The type of object pointed to by a pointer
 data Ptr
@@ -188,3 +191,89 @@ instance (Format gctype, Format nativetype) =>
     string "gc" <+> format ptrclass <+> format ty <+> format mut
   format (Native { nativeTy = ty, nativeMutability = mut }) =
     string "native" <+> format ty <+> format mut
+
+gcPickler :: (GenericXMLString tag, Show tag,
+              GenericXMLString text, Show text,
+              XmlPickler [NodeG [] tag text] gctype) =>
+             PU [NodeG [] tag text] (Ptr gctype nativetype)
+gcPickler =
+  let
+    revfunc GC { gcClass = cls, gcMutability = mut, gcTy = ty } =
+      ((cls, mut), ty)
+    revfunc _ = error "can't convert"
+  in
+    xpWrap (\((cls, mut), ty) -> GC { gcClass = cls, gcTy = ty,
+                                      gcMutability = mut }, revfunc)
+           (xpElem (gxFromString "GC") (xpPair xpickle xpickle) xpickle)
+
+nativePickler :: (GenericXMLString tag, Show tag,
+                  GenericXMLString text, Show text,
+                  XmlPickler [NodeG [] tag text] nativetype) =>
+                 PU [NodeG [] tag text] (Ptr gctype nativetype)
+nativePickler =
+  let
+    revfunc Native { nativeMutability = mut, nativeTy = ty } = (mut, ty)
+    revfunc _ = error "can't convert"
+  in
+    xpWrap (\(mut, ty) -> Native { nativeMutability = mut, nativeTy = ty },
+            revfunc)
+           (xpElem (gxFromString "Native") xpickle xpickle)
+
+instance (GenericXMLString tag, Show tag, GenericXMLString text, Show text,
+          XmlPickler [NodeG [] tag text] gctype,
+          XmlPickler [NodeG [] tag text] nativetype) =>
+         XmlPickler [NodeG [] tag text] (Ptr gctype nativetype) where
+  xpickle =
+    let
+      picker GC {} = 0
+      picker Native {} = 1
+    in
+      xpAlt picker [gcPickler, nativePickler]
+
+instance (GenericXMLString tag, Show tag, GenericXMLString text, Show text) =>
+         XmlPickler (Attributes tag text) Mobility where
+  xpickle = xpAlt fromEnum
+                  [xpWrap (const Mobile, const ())
+                          (xpAttrFixed (gxFromString "mobility")
+                                       (gxFromString "strong")),
+                   xpWrap (const Immobile, const ())
+                          (xpAttrFixed (gxFromString "mobility")
+                                       (gxFromString "weak"))]
+
+instance (GenericXMLString tag, Show tag, GenericXMLString text, Show text) =>
+         XmlPickler (Attributes tag text) PtrClass where
+  xpickle = xpAlt fromEnum
+                  [xpWrap (const Strong, const ())
+                          (xpAttrFixed (gxFromString "ptr-class")
+                                       (gxFromString "strong")),
+                   xpWrap (const Weak, const ())
+                          (xpAttrFixed (gxFromString "ptr-class")
+                                       (gxFromString "weak")),
+                   xpWrap (const Soft, const ())
+                          (xpAttrFixed (gxFromString "ptr-class")
+                                       (gxFromString "soft")),
+                   xpWrap (const Finalizer, const ())
+                          (xpAttrFixed (gxFromString "ptr-class")
+                                       (gxFromString "finalizer")),
+                   xpWrap (const Phantom, const ())
+                          (xpAttrFixed (gxFromString "ptr-class")
+                                       (gxFromString "phantom"))]
+
+instance (GenericXMLString tag, Show tag, GenericXMLString text, Show text) =>
+         XmlPickler (Attributes tag text) Mutability where
+  xpickle = xpAlt fromEnum
+                  [xpWrap (const Immutable, const ())
+                          (xpAttrFixed (gxFromString "mutability")
+                                       (gxFromString "immutable")),
+                   xpWrap (const WriteOnce, const ())
+                          (xpAttrFixed (gxFromString "mutability")
+                                       (gxFromString "writeonce")),
+                   xpWrap (const Mutable, const ())
+                          (xpAttrFixed (gxFromString "mutability")
+                                       (gxFromString "mutable")),
+                   xpWrap (const VolatileOnce, const ())
+                          (xpAttrFixed (gxFromString "mutability")
+                                       (gxFromString "volatileonce")),
+                   xpWrap (const Volatile, const ())
+                          (xpAttrFixed (gxFromString "mutability")
+                                       (gxFromString "volatile"))]

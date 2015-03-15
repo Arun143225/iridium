@@ -15,7 +15,8 @@
 -- Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
 -- 02110-1301 USA
 {-# OPTIONS_GHC -funbox-strict-fields -Wall -Werror #-}
-{-# LANGUAGE MultiParamTypeClasses, FlexibleInstances, FlexibleContexts #-}
+{-# LANGUAGE MultiParamTypeClasses, FlexibleInstances,
+             FlexibleContexts, UndecidableInstances #-}
 
 module IR.Common.Body(
        Body(..),
@@ -27,6 +28,7 @@ module IR.Common.Body(
        StmElems
        ) where
 
+import Data.Graph.Inductive.Graph hiding (out)
 import Data.Hashable
 import Data.Hashable.Extras
 import Data.Map(Map)
@@ -35,8 +37,10 @@ import IR.Common.LValue
 import IR.Common.Names
 import IR.Common.Transfer
 import Prelude.Extras
-import Text.Format
-import Text.FormatM
+import Text.Format hiding (concat)
+import Text.FormatM hiding (concat)
+import Text.XML.Expat.Pickle hiding (Node)
+import Text.XML.Expat.Tree(NodeG)
 
 import qualified Data.Map as Map
 
@@ -180,7 +184,7 @@ instance Hashable1 Stm where
 
 instance Hashable Phi where
   hashWithSalt s Phi { phiName = name, phiVals = vals } =
-    s `hashWithSalt` name `hashWithSalt` (Map.toList vals)
+    s `hashWithSalt` name `hashWithSalt` Map.toList vals
 
 instance Hashable1 Bind where
   hashWithSalt1 s Bind { bindName = name1, bindVal = val1 } =
@@ -253,3 +257,173 @@ instance FormatM m exp => FormatM m (Block exp [Stm exp]) where
       stmdocs <- mapM formatM stms
       xferdoc <- formatM xfer
       return $! vcat (stmdocs ++ [xferdoc])
+
+movePickler :: (GenericXMLString tag, Show tag,
+               GenericXMLString text, Show text,
+               XmlPickler [NodeG [] tag text] exp) =>
+              PU [NodeG [] tag text] (Stm exp)
+movePickler =
+  let
+    revfunc Move { moveDst = dst, moveSrc = src, movePos = pos } =
+      (pos, (src, dst))
+    revfunc _ = error "can't convert"
+  in
+    xpWrap (\(pos, (src, dst)) -> Move { moveSrc = src, moveDst = dst,
+                                         movePos = pos }, revfunc)
+           (xpElem (gxFromString "Move") xpickle
+                   (xpPair (xpElemNodes (gxFromString "src") xpickle)
+                           (xpElemNodes (gxFromString "dst") xpickle)))
+
+doPickler :: (GenericXMLString tag, Show tag,
+              GenericXMLString text, Show text,
+              XmlPickler [NodeG [] tag text] exp) =>
+             PU [NodeG [] tag text] (Stm exp)
+doPickler =
+  let
+    revfunc (Do e) = e
+    revfunc _ = error "can't convert"
+  in
+    xpWrap (Do, revfunc) (xpElemNodes (gxFromString "Do") xpickle)
+
+instance (GenericXMLString tag, Show tag, GenericXMLString text, Show text,
+          XmlPickler [NodeG [] tag text] exp) =>
+         XmlPickler [NodeG [] tag text] (Stm exp) where
+  xpickle =
+    let
+      picker Move {} = 0
+      picker (Do _) = 1
+    in
+      xpAlt picker [movePickler, doPickler]
+
+bindPickler :: (GenericXMLString tag, Show tag,
+               GenericXMLString text, Show text,
+               XmlPickler [NodeG [] tag text] exp) =>
+              PU [NodeG [] tag text] (Bind exp)
+bindPickler =
+  let
+    revfunc Bind { bindName = name, bindVal = val, bindPos = pos } =
+      ((name, pos), val)
+    revfunc _ = error "can't convert"
+  in
+    xpWrap (\((name, pos), val) -> Bind { bindName = name, bindVal = val,
+                                          bindPos = pos }, revfunc)
+           (xpElem (gxFromString "Bind") (xpPair xpickle xpickle)
+                   (xpElemNodes (gxFromString "val") xpickle))
+
+effectPickler :: (GenericXMLString tag, Show tag,
+                  GenericXMLString text, Show text,
+                  XmlPickler [NodeG [] tag text] exp) =>
+                 PU [NodeG [] tag text] (Bind exp)
+effectPickler =
+  let
+    revfunc (Effect e) = e
+    revfunc _ = error "can't convert"
+  in
+    xpWrap (Effect, revfunc) (xpElemNodes (gxFromString "Effect") xpickle)
+
+instance (GenericXMLString tag, Show tag, GenericXMLString text, Show text,
+          XmlPickler [NodeG [] tag text] exp) =>
+         XmlPickler [NodeG [] tag text] (Bind exp) where
+  xpickle =
+    let
+      picker Bind {} = 0
+      picker (Effect _) = 1
+    in
+      xpAlt picker [bindPickler, effectPickler]
+
+instance (GenericXMLString tag, Show tag, GenericXMLString text, Show text) =>
+         XmlPickler [NodeG [] tag text] Phi where
+  xpickle =
+    xpWrap (\((name, pos), vals) -> Phi { phiName = name, phiPos = pos,
+                                          phiVals = Map.fromList vals },
+            \Phi { phiName = name, phiPos = pos, phiVals = vals } ->
+              ((name, pos), Map.toList vals))
+           (xpElem (gxFromString "Phi") (xpPair xpickle xpickle)
+                   (xpElemNodes (gxFromString "vals")
+                                (xpList (xpElemAttrs (gxFromString "val")
+                                                     (xpPair xpickle
+                                                             xpickle)))))
+
+phiBlockPickler :: (GenericXMLString tag, Show tag,
+                    GenericXMLString text, Show text,
+                    XmlPickler [NodeG [] tag text] exp) =>
+                   PU [NodeG [] tag text] (Label, Block exp ([Phi], [Bind exp]))
+phiBlockPickler =
+  let
+    revfunc (l, Block { blockBody = (phis, binds), blockXfer = xfer,
+                        blockPos = pos }) =
+      ((l, pos), (phis, binds, xfer))
+  in
+    xpWrap (\((l, pos), (phis, binds, xfer)) ->
+             (l, Block { blockBody = (phis, binds), blockXfer = xfer,
+                         blockPos = pos }), revfunc)
+           (xpElem (gxFromString "Block") (xpPair xpickle xpickle)
+                   (xpTriple (xpElemNodes (gxFromString "phis")
+                                          (xpList xpickle))
+                             (xpElemNodes (gxFromString "binds")
+                                          (xpList xpickle))
+                             (xpElemNodes (gxFromString "xfer") xpickle)))
+
+stmBlockPickler :: (GenericXMLString tag, Show tag,
+                    GenericXMLString text, Show text,
+                    XmlPickler [NodeG [] tag text] exp) =>
+                   PU [NodeG [] tag text] (Label, Block exp [Stm exp])
+stmBlockPickler =
+  let
+    revfunc (l, Block { blockBody = stms, blockXfer = xfer,
+                        blockPos = pos }) =
+      ((l, pos), (stms, xfer))
+  in
+    xpWrap (\((l, pos), (stms, xfer)) ->
+             (l, Block { blockBody = stms, blockXfer = xfer,
+                         blockPos = pos }), revfunc)
+           (xpElem (gxFromString "Block") (xpPair xpickle xpickle)
+                   (xpPair (xpElemNodes (gxFromString "stms")
+                                        (xpList xpickle))
+                           (xpElemNodes (gxFromString "xfer") xpickle)))
+
+
+bodyPickler :: (GenericXMLString tag, Show tag,
+                GenericXMLString text, Show text,
+                Graph gr, XmlPickler [NodeG [] tag text] exp) =>
+               PU [NodeG [] tag text] (Label, Block exp elems) ->
+               PU [NodeG [] tag text] (Body exp elems gr)
+bodyPickler elemsPickler =
+  let
+    buildCFG :: Graph gr =>
+                [(Label, Block exp elems)] -> gr (Block exp elems) ()
+    buildCFG blocks =
+      let
+        getEdges :: (Label, Block exp elems) -> [(Node, Node, ())]
+        getEdges (src, Block { blockXfer = Goto { gotoLabel = dst } }) =
+          [(fromEnum src, fromEnum dst, ())]
+        getEdges (src, Block { blockXfer = Case { caseDefault = def,
+                                                  caseCases = cases } }) =
+          (fromEnum src, fromEnum def, ()) :
+          map (\(_, dst) -> (fromEnum src, fromEnum dst, ())) cases
+        getEdges (_, Block { blockXfer = Ret {} }) = []
+        getEdges (_, Block { blockXfer = Unreachable _ }) = []
+      in
+        mkGraph (map (\(l, b) -> (fromEnum l, b)) blocks)
+                (concatMap getEdges blocks)
+
+    extractNode (l, b) = (toEnum l, b)
+  in
+    xpWrap (\(l, blocks) -> Body { bodyEntry = l, bodyCFG = buildCFG blocks },
+            \Body { bodyEntry = l, bodyCFG = cfg } ->
+              (l, map extractNode (labNodes cfg)))
+           (xpElem (gxFromString "Body") xpickle
+                   (xpElemNodes (gxFromString "blocks")
+                                (xpList elemsPickler)))
+
+instance (GenericXMLString tag, Show tag,
+          GenericXMLString text, Show text,
+          Graph gr, XmlPickler [NodeG [] tag text] exp) =>
+         XmlPickler [NodeG [] tag text] (Body exp ([Phi], [Bind exp]) gr) where
+  xpickle = bodyPickler phiBlockPickler
+
+instance (GenericXMLString tag, Show tag,
+          GenericXMLString text, Show text,
+          Graph gr, XmlPickler [NodeG [] tag text] exp) =>
+         XmlPickler [NodeG [] tag text] (Body exp [Stm exp] gr) where
+  xpickle = bodyPickler stmBlockPickler

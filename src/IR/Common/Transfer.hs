@@ -30,6 +30,8 @@ import IR.Common.RenameType
 import Prelude.Extras
 import Text.Format
 import Text.FormatM
+import Text.XML.Expat.Pickle hiding (Node)
+import Text.XML.Expat.Tree(NodeG)
 
 -- | Transfers.  These represent methods of leaving a basic block.
 -- All basic blocks end in a transfer.
@@ -149,3 +151,77 @@ instance FormatM m exp => FormatM m (Transfer exp) where
       return $! string "ret" <+> edoc
   formatM Ret { retVal = Nothing } = return $! string "ret"
   formatM (Unreachable _) = return $! string "Unreachable"
+
+gotoPickler :: (GenericXMLString tag, Show tag,
+                GenericXMLString text, Show text) =>
+             PU [NodeG [] tag text] (Transfer exp)
+gotoPickler =
+  let
+    revfunc Goto { gotoLabel = l, gotoPos = pos } = (l, pos)
+    revfunc _ = error $! "Can't convert"
+  in
+    xpWrap (\(l, pos) -> Goto { gotoLabel = l, gotoPos = pos }, revfunc)
+           (xpElemAttrs (gxFromString "Goto") (xpPair xpickle xpickle))
+
+casePickler :: (GenericXMLString tag, Show tag,
+                 GenericXMLString text, Show text,
+                 XmlPickler [NodeG [] tag text] exp) =>
+               PU [NodeG [] tag text] (Transfer exp)
+casePickler =
+  let
+    revfunc Case { caseVal = val, caseDefault = def,
+                   caseCases = cases, casePos = pos } =
+      (pos, (val, cases, def))
+    revfunc _ = error $! "Can't convert"
+
+    casepickler =
+      xpElemNodes (gxFromString "cases")
+                  (xpList (xpElemAttrs (gxFromString "case")
+                                       (xpPair (xpAttr (gxFromString "val")
+                                                       xpPrim)
+                                               xpickle)))
+  in
+    xpWrap (\(pos, (val, cases, def)) ->
+             Case { caseVal = val, caseDefault = def,
+                    caseCases = cases, casePos = pos }, revfunc)
+           (xpElem (gxFromString "Ret") xpickle
+                   (xpTriple (xpElemNodes (gxFromString "val") xpickle)
+                             (xpElemNodes (gxFromString "cases") casepickler)
+                             (xpElemAttrs (gxFromString "default") xpickle)))
+
+
+retPickler :: (GenericXMLString tag, Show tag,
+               GenericXMLString text, Show text,
+               XmlPickler [NodeG [] tag text] exp) =>
+              PU [NodeG [] tag text] (Transfer exp)
+retPickler =
+  let
+    revfunc Ret { retVal = val, retPos = pos } = (pos, val)
+    revfunc _ = error $! "Can't convert"
+  in
+    xpWrap (\(pos, val) -> Ret { retVal = val, retPos = pos }, revfunc)
+           (xpElem (gxFromString "Ret") xpickle
+                   (xpOption (xpElemNodes (gxFromString "val") xpickle)))
+
+unreachablePickler :: (GenericXMLString tag, Show tag,
+                       GenericXMLString text, Show text) =>
+                      PU [NodeG [] tag text] (Transfer exp)
+unreachablePickler =
+  let
+    revfunc (Unreachable pos) = pos
+    revfunc _ = error "cannot convert"
+  in
+    xpWrap (Unreachable, revfunc)
+           (xpElemAttrs (gxFromString "Unreachable") xpickle)
+
+instance (GenericXMLString tag, Show tag, GenericXMLString text, Show text,
+          XmlPickler [NodeG [] tag text] exp) =>
+         XmlPickler [NodeG [] tag text] (Transfer exp) where
+  xpickle =
+    let
+      picker Goto {} = 0
+      picker Case {} = 1
+      picker Ret {} = 2
+      picker Unreachable {} = 3
+    in
+      xpAlt picker [gotoPickler, casePickler, retPickler, unreachablePickler]

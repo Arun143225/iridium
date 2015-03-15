@@ -18,7 +18,8 @@ Cabal-version:       >= 1.9.2
 
 Library
   build-depends:        base, mtl, hashable, fgl, array, prelude-extras,
-                        compiler-misc, containers, hashable-extras
+                        compiler-misc, containers, hashable-extras, hexpat,
+                        hexpat-pickle
   hs-source-dirs:       src
   exposed-modules:      IR.Common.Body
                         IR.Common.LValue,

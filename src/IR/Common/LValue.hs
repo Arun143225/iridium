@@ -30,8 +30,10 @@ import IR.Common.RenameType
 import Prelude.Extras
 import Text.Format
 import Text.FormatM
+import Text.XML.Expat.Pickle hiding (Node)
+import Text.XML.Expat.Tree(NodeG)
 
--- | An assignable value
+-- | An assignable value.
 data LValue exp =
   -- | An array (or pointer) index
     Index {
@@ -204,3 +206,95 @@ instance FormatM m exp => FormatM m (LValue exp) where
       return $! string "*" <+> edoc
   formatM Global { globalName = g } = return $! format g
   formatM Var { varName = v } = return $! format v
+
+indexPickler :: (GenericXMLString tag, Show tag,
+                 GenericXMLString text, Show text,
+                 XmlPickler [NodeG [] tag text] exp) =>
+                PU [NodeG [] tag text] (LValue exp)
+indexPickler =
+  let
+    revfunc Index { idxVal = val, idxIndex = idx, idxPos = pos } =
+      (pos, (val, idx))
+    revfunc _ = error "can't convert"
+  in
+    xpWrap (\(pos, (val, idx)) -> Index { idxVal = val, idxIndex = idx,
+                                          idxPos = pos }, revfunc)
+           (xpElem (gxFromString "Index") xpickle (xpPair xpickle xpickle))
+
+fieldPickler :: (GenericXMLString tag, Show tag,
+                 GenericXMLString text, Show text,
+                 XmlPickler [NodeG [] tag text] exp) =>
+                PU [NodeG [] tag text] (LValue exp)
+fieldPickler =
+  let
+    revfunc Field { fieldVal = val, fieldName = name, fieldPos = pos } =
+      ((name, pos), val)
+    revfunc _ = error "can't convert"
+  in
+    xpWrap (\((name, pos), val) -> Field { fieldVal = val, fieldName = name,
+                                           fieldPos = pos }, revfunc)
+           (xpElem (gxFromString "Index") (xpPair xpickle xpickle) xpickle)
+
+formPickler :: (GenericXMLString tag, Show tag,
+                 GenericXMLString text, Show text,
+                 XmlPickler [NodeG [] tag text] exp) =>
+                PU [NodeG [] tag text] (LValue exp)
+formPickler =
+  let
+    revfunc Form { formVal = val, formName = name, formPos = pos } =
+      ((name, pos), val)
+    revfunc _ = error "can't convert"
+  in
+    xpWrap (\((name, pos), val) -> Form { formVal = val, formName = name,
+                                          formPos = pos }, revfunc)
+           (xpElem (gxFromString "Index") (xpPair xpickle xpickle) xpickle)
+
+derefPickler :: (GenericXMLString tag, Show tag,
+                 GenericXMLString text, Show text,
+                 XmlPickler [NodeG [] tag text] exp) =>
+                PU [NodeG [] tag text] (LValue exp)
+derefPickler =
+  let
+    revfunc Deref { derefVal = val, derefPos = pos } = (pos, val)
+    revfunc _ = error "can't convert"
+  in
+    xpWrap (\(pos, val) -> Deref { derefVal = val, derefPos = pos }, revfunc)
+           (xpElem (gxFromString "Deref") xpickle xpickle)
+
+varPickler :: (GenericXMLString tag, Show tag,
+               GenericXMLString text, Show text) =>
+              PU [NodeG [] tag text] (LValue exp)
+varPickler =
+  let
+    revfunc Var { varName = name, varPos = pos } = (name, pos)
+    revfunc _ = error "can't convert"
+  in
+    xpWrap (\(name, pos) -> Var { varName = name, varPos = pos }, revfunc)
+           (xpElemAttrs (gxFromString "Var") (xpPair xpickle xpickle))
+
+globalPickler :: (GenericXMLString tag, Show tag,
+               GenericXMLString text, Show text) =>
+              PU [NodeG [] tag text] (LValue exp)
+globalPickler =
+  let
+    revfunc Global { globalName = name, globalPos = pos } = (name, pos)
+    revfunc _ = error "can't convert"
+  in
+    xpWrap (\(name, pos) -> Global { globalName = name, globalPos = pos },
+            revfunc)
+           (xpElemAttrs (gxFromString "Global") (xpPair xpickle xpickle))
+
+instance (GenericXMLString tag, Show tag, GenericXMLString text, Show text,
+          XmlPickler [NodeG [] tag text] exp) =>
+         XmlPickler [NodeG [] tag text] (LValue exp) where
+  xpickle =
+    let
+      picker Index {} = 0
+      picker Field {} = 1
+      picker Form {} = 2
+      picker Deref {} = 3
+      picker Var {} = 4
+      picker Global {} = 5
+    in
+      xpAlt picker [indexPickler, fieldPickler, formPickler,
+                    derefPickler, varPickler, globalPickler]
