@@ -31,7 +31,7 @@ Library
                         IR.Common.RenameType,
                         IR.Common.RenameType.Class
                         IR.Common.Transfer
---                        IR.FlatIR.Syntax
+                        IR.FlatIR.Syntax
 --                        IR.FlatIR.SSAConvert
 --                        IR.FlatIR.LLVMGen
 --                        IR.FlatIR.LLVMGen.CodeGen,

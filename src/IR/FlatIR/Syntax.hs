@@ -33,12 +33,12 @@
 --   * Add exception handling
 module IR.FlatIR.Syntax(
        -- * Indexes
-       GCHeader(..),
-       Id(..),
-       Label(..),
-       Fieldname(..),
-       Typename(..),
-       Globalname(..),
+       GCHeader,
+       Id,
+       Label,
+       Fieldname,
+       Typename,
+       Globalname,
 
        -- * Operators and options
        Binop(..),
@@ -74,25 +74,24 @@ module IR.FlatIR.Syntax(
        ) where
 
 import Data.Array
-import Data.Graph.Inductive.Graph(Node)
 --import Data.Graph.Inductive.Query.DFS
 import Data.Functor
 import Data.Hashable
-import Data.Hashable.Extras
-import Data.Hash.ExtraInstances()
-import Data.Map(Map)
 import Data.Maybe
-import Data.Interval(Intervals)
-import Data.Pos
+--import Data.Interval(Intervals)
+import Data.Position
 import Data.Word
+import IR.Common.Body
+import IR.Common.LValue
 import IR.Common.Names
 import IR.Common.Ptr
 import IR.Common.Operator
 import IR.Common.Rename
 import IR.Common.RenameType
+import IR.Common.Transfer
 import Prelude hiding (head)
-import Prelude.Extras
-import Text.Format
+--import Prelude.Extras
+--import Text.Format
 
 -- FlatIR is a simply-typed IR intended to be close to LLVM, but not
 -- in SSA form.  It is intended primarily as a jumping-off point for
@@ -123,7 +122,7 @@ data Type =
       -- | The types of the arguments.
       funcTyArgTys :: [Type],
       -- | The position in source from which this arises.
-      funcTyPos :: !Pos
+      funcTyPos :: !Position
     }
   -- | A structure, representing both tuples and records
   | StructType {
@@ -132,14 +131,14 @@ data Type =
       -- | The fields of the struct.
       structFields :: Array Fieldname (String, Mutability, Type),
       -- | The position in source from which this arises.
-      structPos :: !Pos
+      structPos :: !Position
     }
   -- | A variant, representing both tuples and records
   | VariantType {
       -- | The fields of the struct.
       variantForms :: Array Variantname (String, Mutability, Type),
       -- | The position in source from which this arises.
-      variantPos :: !Pos
+      variantPos :: !Position
     }
   -- | An array.  Unlike LLVM arrays, these may be variable-sized
   | ArrayType {
@@ -148,14 +147,14 @@ data Type =
       -- | The type of array elements.
       arrayElemTy :: Type,
       -- | The position in source from which this arises.
-      arrayPos :: !Pos
+      arrayPos :: !Position
     }
   -- | Pointers, both native and GC
   | PtrType {
       -- | The pointer information
       ptrTy :: !(Ptr GCHeader Type),
       -- | The position in source from which this arises.
-      ptrPos :: !Pos
+      ptrPos :: !Position
     }
   -- | An integer, possibly signed, with a size.
   | IntType {
@@ -164,26 +163,26 @@ data Type =
       -- | The size of the int in bits.
       intSize :: !Word,
       -- | The possible-value intervals for the integer.
-      intIntervals :: Intervals Integer,
+      --intIntervals :: Intervals Integer,
       -- | The position in source from which this arises.
-      intPos :: !Pos
+      intPos :: !Position
     }
   -- | A defined type
   | IdType {
       -- | The name for this type.
       idName :: !Typename,
       -- | The position in source from which this arises.
-      idPos :: !Pos
+      idPos :: !Position
     }
   -- | Floating point types
   | FloatType {
       -- | The size of the float in bits.
       floatSize :: !Word,
       -- | The position in source from which this arises.
-      floatPos :: !Pos
+      floatPos :: !Position
     }
   -- | The unit type, equivalent to SML unit and C/Java void
-  | UnitType !Pos
+  | UnitType !Position
 
 -- | An expression
 data Exp =
@@ -200,7 +199,7 @@ data Exp =
       -- | The right hand side.
       binopRight :: Exp,
       -- | The position in source from which this arises.
-      binopPos :: !Pos
+      binopPos :: !Position
     }
   -- | Call a function.
   | Call {
@@ -209,7 +208,7 @@ data Exp =
       -- | The arguments to the function.
       callArgs :: [Exp],
       -- | The position in source from which this arises.
-      callPos :: !Pos
+      callPos :: !Position
     }
   -- | A unary operation
   | Unop {
@@ -218,7 +217,7 @@ data Exp =
       -- | The operand.
       unopVal ::  Exp,
       -- | The position in source from which this arises.
-      unopPos :: !Pos
+      unopPos :: !Position
     }
   -- | A conversion from one type to another.
   | Conv {
@@ -227,7 +226,7 @@ data Exp =
       -- | The value being converted.
       convVal :: Exp,
       -- | The position in source from which this arises.
-      convPos :: !Pos
+      convPos :: !Position
     }
   -- | Treat an expression as if it were the given type regardless of
   -- its actual type.
@@ -237,14 +236,14 @@ data Exp =
       -- | The value being cast.
       castVal :: Exp,
       -- | The position in source from which this arises.
-      castPos :: !Pos
+      castPos :: !Position
     }
   -- | Address of an LValue
   | AddrOf {
       -- | The value having its address taken.
-      addrofVal :: LValue,
+      addrofVal :: LValue Exp,
       -- | The position in source from which this arises.
-      addrofPos :: !Pos
+      addrofPos :: !Position
     }
   -- | A structure literal
   | StructLit {
@@ -253,7 +252,7 @@ data Exp =
       -- | The constant's field values
       structLitFields :: Array Fieldname Exp,
       -- | The position in source from which this arises.
-      structLitPos :: !Pos
+      structLitPos :: !Position
     }
   -- | A variant literal
   | VariantLit {
@@ -264,7 +263,7 @@ data Exp =
       -- | The literal's inner value.
       variantLitVal :: Exp,
       -- | The position in source from which this arises.
-      variantLitPos :: !Pos
+      variantLitPos :: !Position
     }
   -- | An array literal
   | ArrayLit {
@@ -273,7 +272,7 @@ data Exp =
       -- | The constant's values
       arrayLitVals :: [Exp],
       -- | The position in source from which this arises.
-      arrayLitPos :: !Pos
+      arrayLitPos :: !Position
     }
   -- | A numerical constant with a given size and signedness XXX add a
   -- floating point constant.
@@ -283,13 +282,13 @@ data Exp =
       -- | The constant's value
       numLitVal :: !Integer,
       -- | The position in source from which this arises.
-      numLitPos :: !Pos
+      numLitPos :: !Position
     }
   -- | An LValue
-  | LValue !LValue
+  | LValue !(LValue Exp)
 
 -- | A global value.  Represents a global variable or a function.
-data Global elem gr =
+data Global elems gr =
   -- | A function
     Function {
       -- | Name of the function
@@ -302,9 +301,9 @@ data Global elem gr =
       -- | A list of the identifiers representing arguments
       funcParams :: [Id],
       -- | The function's body, if it has one
-      funcBody :: Maybe (Body elem gr),
+      funcBody :: Maybe (Body Exp elems gr),
       -- | The position in source from which this arises.
-      funcPos :: !Pos
+      funcPos :: !Position
     }
   -- | A global variable
   | GlobalVar {
@@ -317,7 +316,7 @@ data Global elem gr =
       -- | The variable's mutability.
       gvarMutability :: Mutability,
       -- | The position in source from which this arises.
-      gvarPos :: !Pos
+      gvarPos :: !Position
     }
 
 -- | A module.  Represents a concept similar to an LLVM module.
@@ -337,11 +336,11 @@ data Module elem gr =
       modGlobals :: Array Globalname (Global elem gr),
       -- | The position in source from which this arises.  This is here
       -- solely to record filenames in a unified way.
-      modPos :: !Pos
+      modPos :: !Position
     }
 
-type StmModule = Module Stm
-type SSAModule = Module Bind
+type StmModule = Module (StmElems Exp)
+type SSAModule = Module (SSAElems Exp)
 
 instance Eq Type where
   FuncType { funcTyRetTy = retty1, funcTyArgTys = params1 } ==
@@ -358,9 +357,11 @@ instance Eq Type where
     len1 == len2 && inner1 == inner2
   PtrType { ptrTy = objtype1 } == PtrType { ptrTy = objtype2 } =
     objtype1 == objtype2
-  IntType { intSigned = signed1, intIntervals = intervals1, intSize = size1 } ==
-    IntType { intSigned = signed2, intIntervals = intervals2, intSize = size2 } =
-    signed1 == signed2 && size1 == size2 && intervals1 == intervals2
+  IntType { intSigned = signed1, --intIntervals = intervals1,
+            intSize = size1 } ==
+    IntType { intSigned = signed2, --intIntervals = intervals2,
+              intSize = size2 } =
+    signed1 == signed2 && size1 == size2 -- && intervals1 == intervals2
   IdType { idName = name1 } == IdType { idName = name2 } = name1 == name2
   FloatType { floatSize = size1 } == FloatType { floatSize = size2 } =
     size1 == size2
@@ -432,14 +433,17 @@ instance Ord Type where
     compare objtype1 objtype2
   compare PtrType {} _ = LT
   compare _ PtrType {} = GT
-  compare IntType { intSigned = signed1, intSize = size1,
-                    intIntervals = intervals1 }
-          IntType { intSigned = signed2, intSize = size2,
-                    intIntervals = intervals2 } =
+  compare IntType { intSigned = signed1, --intIntervals = intervals1,
+                    intSize = size1 }
+          IntType { intSigned = signed2, --intIntervals = intervals2,
+                    intSize = size2 } =
     case compare signed1 signed2 of
-      EQ -> case compare size1 size2 of
+      EQ -> compare size1 size2
+        {-
+        case compare size1 size2 of
         EQ -> compare intervals1 intervals2
         out -> out
+        -}
       out -> out
   compare IntType {} _ = LT
   compare _ IntType {} = GT
@@ -533,55 +537,55 @@ instance Ord Exp where
 
 instance Hashable Type where
   hashWithSalt s FuncType { funcTyRetTy = retty, funcTyArgTys = params } =
-    s `hashWithSalt` (0 :: Word) `hashWithSalt` retty `hashWithSalt` params
+    s `hashWithSalt` (0 :: Int) `hashWithSalt` retty `hashWithSalt` params
   hashWithSalt s StructType { structPacked = packed, structFields = fields } =
-    s `hashWithSalt` (1 :: Word) `hashWithSalt`
-      packed `hashWithSalt` (elems fields)
+    s `hashWithSalt` (1 :: Int) `hashWithSalt`
+      packed `hashWithSalt` elems fields
   hashWithSalt s VariantType { variantForms = forms } =
-    s `hashWithSalt` (2 :: Word) `hashWithSalt` (elems forms)
+    s `hashWithSalt` (2 :: Int) `hashWithSalt` elems forms
   hashWithSalt s ArrayType { arrayLen = Nothing, arrayElemTy = inner } =
-    s `hashWithSalt` (3 :: Word) `hashWithSalt` (0 :: Word) `hashWithSalt` inner
+    s `hashWithSalt` (3 :: Int) `hashWithSalt` (0 :: Int) `hashWithSalt` inner
   hashWithSalt s ArrayType { arrayLen = Just size, arrayElemTy = inner } =
-    s `hashWithSalt` (3 :: Word) `hashWithSalt` size `hashWithSalt` inner
+    s `hashWithSalt` (3 :: Int) `hashWithSalt` size `hashWithSalt` inner
   hashWithSalt s PtrType { ptrTy = objtype } =
-    s `hashWithSalt` (4 :: Word) `hashWithSalt` objtype
-  hashWithSalt s IntType { intSigned = signed, intIntervals = intervals,
+    s `hashWithSalt` (4 :: Int) `hashWithSalt` objtype
+  hashWithSalt s IntType { intSigned = signed, --intIntervals = intervals,
                            intSize = size } =
-    s `hashWithSalt` (5 :: Word) `hashWithSalt` signed `hashWithSalt`
-      intervals `hashWithSalt` size
-  hashWithSalt s IdType { idName = Typename str } =
-    s `hashWithSalt` (6 :: Word) `hashWithSalt` str
+    s `hashWithSalt` (5 :: Int) `hashWithSalt` signed `hashWithSalt`
+      {-intervals `hashWithSalt`-} size
+  hashWithSalt s IdType { idName = name } =
+    s `hashWithSalt` (6 :: Int) `hashWithSalt` name
   hashWithSalt s FloatType { floatSize = size } =
-    s `hashWithSalt` (7 :: Word) `hashWithSalt` size
-  hashWithSalt s UnitType {} = s `hashWithSalt` (7 :: Word)
+    s `hashWithSalt` (7 :: Int) `hashWithSalt` size
+  hashWithSalt s UnitType {} = s `hashWithSalt` (7 :: Int)
 
 instance Hashable Exp where
   hashWithSalt s Binop { binopOp = op, binopLeft = left, binopRight = right } =
-    s `hashWithSalt` (1 :: Word) `hashWithSalt`
+    s `hashWithSalt` (1 :: Int) `hashWithSalt`
     op `hashWithSalt` left `hashWithSalt` right
   hashWithSalt s Call { callFunc = func, callArgs = args } =
-    s `hashWithSalt` (2 :: Word) `hashWithSalt` func `hashWithSalt` args
+    s `hashWithSalt` (2 :: Int) `hashWithSalt` func `hashWithSalt` args
   hashWithSalt s Unop { unopOp = op, unopVal = val } =
-    s `hashWithSalt` (3 :: Word) `hashWithSalt` op `hashWithSalt` val
+    s `hashWithSalt` (3 :: Int) `hashWithSalt` op `hashWithSalt` val
   hashWithSalt s Conv { convTy = ty, convVal = val } =
-    s `hashWithSalt` (4 :: Word) `hashWithSalt` ty `hashWithSalt` val
+    s `hashWithSalt` (4 :: Int) `hashWithSalt` ty `hashWithSalt` val
   hashWithSalt s Cast { castTy = ty, castVal = val } =
-    s `hashWithSalt` (5 :: Word) `hashWithSalt` ty `hashWithSalt` val
+    s `hashWithSalt` (5 :: Int) `hashWithSalt` ty `hashWithSalt` val
   hashWithSalt s AddrOf { addrofVal = val } =
-    s `hashWithSalt` (6 :: Word) `hashWithSalt` val
+    s `hashWithSalt` (6 :: Int) `hashWithSalt` val
   hashWithSalt s StructLit { structLitTy = ty, structLitFields = fields } =
-    s `hashWithSalt` (7 :: Word) `hashWithSalt` ty `hashWithSalt` (elems fields)
+    s `hashWithSalt` (7 :: Int) `hashWithSalt` ty `hashWithSalt` elems fields
   hashWithSalt s VariantLit { variantLitTy = ty, variantLitForm = form,
                               variantLitVal = val } =
-    s `hashWithSalt` (8 :: Word) `hashWithSalt`
+    s `hashWithSalt` (8 :: Int) `hashWithSalt`
     form `hashWithSalt` ty `hashWithSalt` val
   hashWithSalt s ArrayLit { arrayLitTy = ty, arrayLitVals = vals } =
-    s `hashWithSalt` (9 :: Word) `hashWithSalt` ty `hashWithSalt` vals
+    s `hashWithSalt` (9 :: Int) `hashWithSalt` ty `hashWithSalt` vals
   hashWithSalt s NumLit { numLitTy = ty, numLitVal = val } =
-    s `hashWithSalt` (10 :: Word) `hashWithSalt` ty `hashWithSalt` val
+    s `hashWithSalt` (10 :: Int) `hashWithSalt` ty `hashWithSalt` val
   hashWithSalt s (LValue lval) =
-    s `hashWithSalt` (11 :: Word) `hashWithSalt` lval
-  hashWithSalt _ (GCAlloc _ _ _) = error "GCAlloc is going away"
+    s `hashWithSalt` (11 :: Int) `hashWithSalt` lval
+  hashWithSalt _ (GCAlloc {}) = error "GCAlloc is going away"
 
 instance RenameType Typename Type where
   renameType f ty @ FuncType { funcTyRetTy = retty, funcTyArgTys = argtys } =
@@ -592,8 +596,8 @@ instance RenameType Typename Type where
     ty { variantForms = fmap (\(n, m, t) -> (n, m, renameType f t)) forms }
   renameType f ty @ ArrayType { arrayElemTy = elemty } =
     ty { arrayElemTy = renameType f elemty }
-  renameType f ty @ PtrType { ptrTy = inner } =
-    ty { ptrTy = renameType f inner }
+--  renameType f ty @ PtrType { ptrTy = inner } =
+--    ty { ptrTy = renameType f inner }
   renameType f ty @ IdType { idName = name } = ty { idName = f name }
   renameType _ ty = ty
 
@@ -801,22 +805,7 @@ instance Graph gr => Format (Module gr) where
                 (space : gcgendocs) ++ (space : globalsdocs)
     in
       braceBlock ("module" <+> name) content
--}
-instance Show Label where
-  show (Label l) = "L" ++ show l
 
-instance Show Fieldname where
-  show (Fieldname f) = "f" ++ show f
-
-instance Show Variantname where
-  show (Variantname v) = "v" ++ show v
-
-instance Show Id where
-  show (Id v) = "%" ++ show v
-
-instance Show Globalname where
-  show (Globalname g) = "@" ++ show g
-{-
 instance Graph gr => Show (Module gr) where
   show = show . format
 -}
