@@ -19,7 +19,8 @@ Cabal-version:       >= 1.9.2
 Library
   build-depends:        base, mtl, hashable, fgl, array, prelude-extras,
                         compiler-misc, containers, hashable-extras, hexpat,
-                        hexpat-pickle
+                        hexpat-pickle, llvm-general-pure, bytestring,
+                        unordered-containers
   hs-source-dirs:       src
   exposed-modules:      IR.Common.Body
                         IR.Common.LValue,
@@ -30,6 +31,7 @@ Library
                         IR.Common.Rename.Class,
                         IR.Common.RenameType,
                         IR.Common.RenameType.Class
+                        IR.Common.TBAA
                         IR.Common.Transfer
                         IR.FlatIR.Syntax
 --                        IR.FlatIR.SSAConvert
