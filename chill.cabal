@@ -20,7 +20,7 @@ Library
   build-depends:        base, mtl, hashable, fgl, array, prelude-extras,
                         compiler-misc, containers, hashable-extras, hexpat,
                         hexpat-pickle, llvm-general-pure, bytestring,
-                        unordered-containers
+                        unordered-containers, utf8-string, hashtables
   hs-source-dirs:       src
   exposed-modules:      IR.Common.Body
                         IR.Common.LValue,
@@ -34,6 +34,8 @@ Library
                         IR.Common.TBAA
                         IR.Common.Transfer
                         IR.FlatIR.Syntax
+                        IR.FlatIR.LLVMGen.Context
+                        IR.FlatIR.LLVMGen.TBAA
 --                        IR.FlatIR.SSAConvert
 --                        IR.FlatIR.LLVMGen
 --                        IR.FlatIR.LLVMGen.CodeGen,
