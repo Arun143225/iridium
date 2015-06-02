@@ -36,13 +36,12 @@ module IR.Common.LValue(
 
 import Data.Hashable
 import Data.Hashable.Extras
-import Data.Position
+import Data.Position.DWARFPosition
 import IR.Common.Names
 import IR.Common.Rename
 import IR.Common.RenameType
 import Prelude.Extras
 import Text.Format
-import Text.FormatM
 import Text.XML.Expat.Pickle hiding (Node)
 import Text.XML.Expat.Tree(NodeG)
 
@@ -55,7 +54,7 @@ data LValue exp =
       -- | The index value.  Must be an integer type.
       idxIndex :: exp,
       -- | The position in source from which this arises.
-      idxPos :: !Position
+      idxPos :: !DWARFPosition
     }
   -- | A field in a structure
   | Field {
@@ -65,7 +64,7 @@ data LValue exp =
       -- | The name of the field being accessed.
       fieldName :: !Fieldname,
       -- | The position in source from which this arises.
-      fieldPos :: !Position
+      fieldPos :: !DWARFPosition
     }
   -- | A form of a variant
   | Form {
@@ -75,28 +74,28 @@ data LValue exp =
       -- | The name of the field being accessed.
       formName :: !Variantname,
       -- | The position in source from which this arises.
-      formPos :: !Position
+      formPos :: !DWARFPosition
     }
   -- | Dereference a pointer
   | Deref {
       -- | The value being dereferenced.  Must be a pointer type.
       derefVal :: exp,
       -- | The position in source from which this arises.
-      derefPos :: !Position
+      derefPos :: !DWARFPosition
     }
   -- | A local value (local variable or argument)
   | Var {
       -- | The name of the local value.
       varName :: !Id,
       -- | The position in source from which this arises.
-      varPos :: !Position
+      varPos :: !DWARFPosition
     }
   -- | A global value (global variable or function)
   | Global {
       -- | The name of the global value.
       globalName :: !Globalname,
       -- | The position in source from which this arises.
-      globalPos :: !Position
+      globalPos :: !DWARFPosition
     }
 
 instance Eq1 LValue where
@@ -227,12 +226,15 @@ indexPickler :: (GenericXMLString tag, Show tag,
 indexPickler =
   let
     revfunc Index { idxVal = val, idxIndex = idx, idxPos = pos } =
-      (pos, (val, idx))
+      (val, idx, pos)
     revfunc _ = error "can't convert"
   in
-    xpWrap (\(pos, (val, idx)) -> Index { idxVal = val, idxIndex = idx,
-                                          idxPos = pos }, revfunc)
-           (xpElem (gxFromString "Index") xpickle (xpPair xpickle xpickle))
+    xpWrap (\(val, idx, pos) -> Index { idxVal = val, idxIndex = idx,
+                                        idxPos = pos }, revfunc)
+           (xpElemNodes (gxFromString "Index")
+                        (xpTriple (xpElemNodes (gxFromString "val") xpickle)
+                                  (xpElemNodes (gxFromString "index") xpickle)
+                                  (xpElemNodes (gxFromString "pos") xpickle)))
 
 fieldPickler :: (GenericXMLString tag, Show tag,
                  GenericXMLString text, Show text,
@@ -241,12 +243,14 @@ fieldPickler :: (GenericXMLString tag, Show tag,
 fieldPickler =
   let
     revfunc Field { fieldVal = val, fieldName = name, fieldPos = pos } =
-      ((name, pos), val)
+      (name, (val, pos))
     revfunc _ = error "can't convert"
   in
-    xpWrap (\((name, pos), val) -> Field { fieldVal = val, fieldName = name,
+    xpWrap (\(name, (val, pos)) -> Field { fieldVal = val, fieldName = name,
                                            fieldPos = pos }, revfunc)
-           (xpElem (gxFromString "Index") (xpPair xpickle xpickle) xpickle)
+           (xpElem (gxFromString "Field") xpickle
+                   (xpPair (xpElemNodes (gxFromString "val") xpickle)
+                           (xpElemNodes (gxFromString "pos") xpickle)))
 
 formPickler :: (GenericXMLString tag, Show tag,
                  GenericXMLString text, Show text,
@@ -255,12 +259,14 @@ formPickler :: (GenericXMLString tag, Show tag,
 formPickler =
   let
     revfunc Form { formVal = val, formName = name, formPos = pos } =
-      ((name, pos), val)
+      (name, (val, pos))
     revfunc _ = error "can't convert"
   in
-    xpWrap (\((name, pos), val) -> Form { formVal = val, formName = name,
+    xpWrap (\(name, (val, pos)) -> Form { formVal = val, formName = name,
                                           formPos = pos }, revfunc)
-           (xpElem (gxFromString "Index") (xpPair xpickle xpickle) xpickle)
+           (xpElem (gxFromString "Index") xpickle
+                   (xpPair (xpElemNodes (gxFromString "val") xpickle)
+                           (xpElemNodes (gxFromString "pos") xpickle)))
 
 derefPickler :: (GenericXMLString tag, Show tag,
                  GenericXMLString text, Show text,
@@ -272,7 +278,9 @@ derefPickler =
     revfunc _ = error "can't convert"
   in
     xpWrap (\(pos, val) -> Deref { derefVal = val, derefPos = pos }, revfunc)
-           (xpElem (gxFromString "Deref") xpickle xpickle)
+           (xpElemNodes (gxFromString "Deref")
+                       (xpPair (xpElemNodes (gxFromString "val") xpickle)
+                               (xpElemNodes (gxFromString "pos") xpickle)))
 
 varPickler :: (GenericXMLString tag, Show tag,
                GenericXMLString text, Show text) =>
@@ -283,7 +291,8 @@ varPickler =
     revfunc _ = error "can't convert"
   in
     xpWrap (\(name, pos) -> Var { varName = name, varPos = pos }, revfunc)
-           (xpElemAttrs (gxFromString "Var") (xpPair xpickle xpickle))
+           (xpElem (gxFromString "Var") xpickle
+                   (xpElemNodes (gxFromString "pos") xpickle))
 
 globalPickler :: (GenericXMLString tag, Show tag,
                GenericXMLString text, Show text) =>
@@ -295,7 +304,8 @@ globalPickler =
   in
     xpWrap (\(name, pos) -> Global { globalName = name, globalPos = pos },
             revfunc)
-           (xpElemAttrs (gxFromString "Global") (xpPair xpickle xpickle))
+           (xpElem (gxFromString "Global") xpickle
+                   (xpElemNodes (gxFromString "pos") xpickle))
 
 instance (GenericXMLString tag, Show tag, GenericXMLString text, Show text,
           XmlPickler [NodeG [] tag text] exp) =>

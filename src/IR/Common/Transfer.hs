@@ -36,13 +36,12 @@ module IR.Common.Transfer(
 
 import Data.Hashable
 import Data.Hashable.Extras
-import Data.Position
+import Data.Position.DWARFPosition
 import IR.Common.Names
 import IR.Common.Rename
 import IR.Common.RenameType
 import Prelude.Extras
 import Text.Format
-import Text.FormatM
 import Text.XML.Expat.Pickle hiding (Node)
 import Text.XML.Expat.Tree(NodeG)
 
@@ -54,7 +53,7 @@ data Transfer exp =
       -- | The jump target.
       gotoLabel :: !Label,
       -- | The position in source from which this arises.
-      gotoPos :: !Position
+      gotoPos :: !DWARFPosition
     }
   -- | A (integer) case expression
   | Case {
@@ -65,18 +64,18 @@ data Transfer exp =
       -- | The default case.
       caseDefault :: !Label,
       -- | The position in source from which this arises.
-      casePos :: !Position
+      casePos :: !DWARFPosition
     }
   -- | A return
   | Ret {
       -- | The return value, if one exists.
       retVal :: !(Maybe exp),
       -- | The position in source from which this arises.
-      retPos :: !Position
+      retPos :: !DWARFPosition
     }
   -- | An unreachable instruction, usually following a call with no
   -- return
-  | Unreachable !Position
+  | Unreachable !DWARFPosition
 
 instance Eq1 Transfer where
   Goto { gotoLabel = label1 } ==# Goto { gotoLabel = label2 } = label1 == label2
@@ -174,7 +173,8 @@ gotoPickler =
     revfunc _ = error $! "Can't convert"
   in
     xpWrap (\(l, pos) -> Goto { gotoLabel = l, gotoPos = pos }, revfunc)
-           (xpElemAttrs (gxFromString "Goto") (xpPair xpickle xpickle))
+           (xpElem (gxFromString "Goto") xpickle
+                   (xpElemNodes (gxFromString "pos") xpickle))
 
 casePickler :: (GenericXMLString tag, Show tag,
                  GenericXMLString text, Show text,
@@ -184,7 +184,7 @@ casePickler =
   let
     revfunc Case { caseVal = val, caseDefault = def,
                    caseCases = cases, casePos = pos } =
-      (pos, (val, cases, def))
+      (val, cases, def, pos)
     revfunc _ = error $! "Can't convert"
 
     casepickler =
@@ -194,13 +194,16 @@ casePickler =
                                                        xpPrim)
                                                xpickle)))
   in
-    xpWrap (\(pos, (val, cases, def)) ->
+    xpWrap (\(val, cases, def, pos) ->
              Case { caseVal = val, caseDefault = def,
                     caseCases = cases, casePos = pos }, revfunc)
-           (xpElem (gxFromString "Ret") xpickle
-                   (xpTriple (xpElemNodes (gxFromString "val") xpickle)
-                             (xpElemNodes (gxFromString "cases") casepickler)
-                             (xpElemAttrs (gxFromString "default") xpickle)))
+           (xpElemNodes (gxFromString "Case")
+                        (xp4Tuple (xpElemNodes (gxFromString "val") xpickle)
+                                  (xpElemNodes (gxFromString "cases")
+                                               casepickler)
+                                  (xpElemAttrs (gxFromString "default")
+                                               xpickle)
+                                  (xpElemNodes (gxFromString "pos") xpickle)))
 
 
 retPickler :: (GenericXMLString tag, Show tag,
@@ -213,8 +216,10 @@ retPickler =
     revfunc _ = error $! "Can't convert"
   in
     xpWrap (\(pos, val) -> Ret { retVal = val, retPos = pos }, revfunc)
-           (xpElem (gxFromString "Ret") xpickle
-                   (xpOption (xpElemNodes (gxFromString "val") xpickle)))
+           (xpElemNodes (gxFromString "Ret")
+                        (xpPair xpickle
+                                (xpOption (xpElemNodes (gxFromString "val")
+                                                       xpickle))))
 
 unreachablePickler :: (GenericXMLString tag, Show tag,
                        GenericXMLString text, Show text) =>
@@ -225,7 +230,7 @@ unreachablePickler =
     revfunc _ = error "cannot convert"
   in
     xpWrap (Unreachable, revfunc)
-           (xpElemAttrs (gxFromString "Unreachable") xpickle)
+           (xpElemNodes (gxFromString "Unreachable") xpickle)
 
 instance (GenericXMLString tag, Show tag, GenericXMLString text, Show text,
           XmlPickler [NodeG [] tag text] exp) =>

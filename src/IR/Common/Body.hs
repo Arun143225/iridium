@@ -45,13 +45,12 @@ import Data.Graph.Inductive.Graph hiding (out)
 import Data.Hashable
 import Data.Hashable.Extras
 import Data.Map(Map)
-import Data.Position
+import Data.Position.DWARFPosition(DWARFPosition)
 import IR.Common.LValue
 import IR.Common.Names
 import IR.Common.Transfer
 import Prelude.Extras
 import Text.Format hiding (concat)
-import Text.FormatM hiding (concat)
 import Text.XML.Expat.Pickle hiding (Node)
 import Text.XML.Expat.Tree(NodeG)
 
@@ -67,7 +66,7 @@ data Stm exp =
       -- | The source expression.
       moveSrc :: !exp,
       -- | The position in source from which this originates.
-      movePos :: !Position
+      movePos :: !DWARFPosition
     }
   -- | Execute an expression
   | Do !exp
@@ -82,7 +81,7 @@ data Phi =
     -- | A map from inbound edges to values
     phiVals :: !(Map Label Id),
     -- | The position in source from which this arises.
-    phiPos :: !Position
+    phiPos :: !DWARFPosition
   }
 
 -- | A binding.  Represents an SSA binding in the SSA form of the
@@ -94,7 +93,7 @@ data Bind exp =
       -- | The value beind bound.
       bindVal :: !exp,
       -- | The position in source from which this originates.
-      bindPos :: !Position
+      bindPos :: !DWARFPosition
     }
     -- | Execute an expression for its effect only.  Analogous to Do
     -- in the statement language.
@@ -108,7 +107,7 @@ data Block exp elems =
       -- | The transfer for the basic block
       blockXfer :: !(Transfer exp),
       -- | The position in source from which this arises.
-      blockPos :: !Position
+      blockPos :: !DWARFPosition
     }
 
 -- There is no straightforward ordering, equality, or hashing on Body.
@@ -278,14 +277,15 @@ movePickler :: (GenericXMLString tag, Show tag,
 movePickler =
   let
     revfunc Move { moveDst = dst, moveSrc = src, movePos = pos } =
-      (pos, (src, dst))
+      (src, dst, pos)
     revfunc _ = error "can't convert"
   in
-    xpWrap (\(pos, (src, dst)) -> Move { moveSrc = src, moveDst = dst,
-                                         movePos = pos }, revfunc)
-           (xpElem (gxFromString "Move") xpickle
-                   (xpPair (xpElemNodes (gxFromString "src") xpickle)
-                           (xpElemNodes (gxFromString "dst") xpickle)))
+    xpWrap (\(src, dst, pos) -> Move { moveSrc = src, moveDst = dst,
+                                       movePos = pos }, revfunc)
+           (xpElemNodes (gxFromString "Move")
+                        (xpTriple (xpElemNodes (gxFromString "src") xpickle)
+                                  (xpElemNodes (gxFromString "dst") xpickle)
+                                  (xpElemNodes (gxFromString "pos") xpickle)))
 
 doPickler :: (GenericXMLString tag, Show tag,
               GenericXMLString text, Show text,
@@ -315,13 +315,14 @@ bindPickler :: (GenericXMLString tag, Show tag,
 bindPickler =
   let
     revfunc Bind { bindName = name, bindVal = val, bindPos = pos } =
-      ((name, pos), val)
+      (name, (val, pos))
     revfunc _ = error "can't convert"
   in
-    xpWrap (\((name, pos), val) -> Bind { bindName = name, bindVal = val,
+    xpWrap (\(name, (val, pos)) -> Bind { bindName = name, bindVal = val,
                                           bindPos = pos }, revfunc)
-           (xpElem (gxFromString "Bind") (xpPair xpickle xpickle)
-                   (xpElemNodes (gxFromString "val") xpickle))
+           (xpElem (gxFromString "Bind") xpickle
+                   (xpPair (xpElemNodes (gxFromString "val") xpickle)
+                           (xpElemNodes (gxFromString "pos") xpickle)))
 
 effectPickler :: (GenericXMLString tag, Show tag,
                   GenericXMLString text, Show text,
@@ -347,15 +348,17 @@ instance (GenericXMLString tag, Show tag, GenericXMLString text, Show text,
 instance (GenericXMLString tag, Show tag, GenericXMLString text, Show text) =>
          XmlPickler [NodeG [] tag text] Phi where
   xpickle =
-    xpWrap (\((name, pos), vals) -> Phi { phiName = name, phiPos = pos,
-                                          phiVals = Map.fromList vals },
-            \Phi { phiName = name, phiPos = pos, phiVals = vals } ->
-              ((name, pos), Map.toList vals))
-           (xpElem (gxFromString "Phi") (xpPair xpickle xpickle)
-                   (xpElemNodes (gxFromString "vals")
-                                (xpList (xpElemAttrs (gxFromString "val")
-                                                     (xpPair xpickle
-                                                             xpickle)))))
+    let
+      optionPickler = (xpList (xpElemAttrs (gxFromString "val")
+                                           (xpPair xpickle xpickle)))
+    in
+      xpWrap (\(name, (vals, pos)) -> Phi { phiName = name, phiPos = pos,
+                                            phiVals = Map.fromList vals },
+              \Phi { phiName = name, phiPos = pos, phiVals = vals } ->
+                (name, (Map.toList vals, pos)))
+             (xpElem (gxFromString "Phi") xpickle
+                     (xpPair (xpElemNodes (gxFromString "vals") optionPickler)
+                             (xpElemNodes (gxFromString "pos") xpickle)))
 
 phiBlockPickler :: (GenericXMLString tag, Show tag,
                     GenericXMLString text, Show text,
@@ -365,17 +368,18 @@ phiBlockPickler =
   let
     revfunc (l, Block { blockBody = (phis, binds), blockXfer = xfer,
                         blockPos = pos }) =
-      ((l, pos), (phis, binds, xfer))
+      (l, (phis, binds, xfer, pos))
   in
-    xpWrap (\((l, pos), (phis, binds, xfer)) ->
+    xpWrap (\(l, (phis, binds, xfer, pos)) ->
              (l, Block { blockBody = (phis, binds), blockXfer = xfer,
                          blockPos = pos }), revfunc)
-           (xpElem (gxFromString "Block") (xpPair xpickle xpickle)
-                   (xpTriple (xpElemNodes (gxFromString "phis")
+           (xpElem (gxFromString "Block") xpickle
+                   (xp4Tuple (xpElemNodes (gxFromString "phis")
                                           (xpList xpickle))
                              (xpElemNodes (gxFromString "binds")
                                           (xpList xpickle))
-                             (xpElemNodes (gxFromString "xfer") xpickle)))
+                             (xpElemNodes (gxFromString "xfer") xpickle)
+                             (xpElemNodes (gxFromString "pos") xpickle)))
 
 stmBlockPickler :: (GenericXMLString tag, Show tag,
                     GenericXMLString text, Show text,
@@ -385,15 +389,16 @@ stmBlockPickler =
   let
     revfunc (l, Block { blockBody = stms, blockXfer = xfer,
                         blockPos = pos }) =
-      ((l, pos), (stms, xfer))
+      (l, (stms, xfer, pos))
   in
-    xpWrap (\((l, pos), (stms, xfer)) ->
+    xpWrap (\(l, (stms, xfer, pos)) ->
              (l, Block { blockBody = stms, blockXfer = xfer,
                          blockPos = pos }), revfunc)
-           (xpElem (gxFromString "Block") (xpPair xpickle xpickle)
-                   (xpPair (xpElemNodes (gxFromString "stms")
-                                        (xpList xpickle))
-                           (xpElemNodes (gxFromString "xfer") xpickle)))
+           (xpElem (gxFromString "Block") xpickle
+                   (xpTriple (xpElemNodes (gxFromString "stms")
+                                          (xpList xpickle))
+                             (xpElemNodes (gxFromString "xfer") xpickle)
+                             (xpElemNodes (gxFromString "pos") xpickle)))
 
 
 bodyPickler :: (GenericXMLString tag, Show tag,

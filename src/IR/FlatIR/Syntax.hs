@@ -90,7 +90,7 @@ import Data.Functor
 import Data.Hashable
 import Data.Maybe
 import Data.Intervals(Intervals)
-import Data.Position
+import Data.Position.DWARFPosition(DWARFPosition)
 import Data.Word
 import IR.Common.Body
 import IR.Common.LValue
@@ -137,7 +137,7 @@ data Type =
       -- | The types of the arguments.
       funcTyArgTys :: [Type],
       -- | The position in source from which this arises.
-      funcTyPos :: !Position
+      funcTyPos :: !DWARFPosition
     }
   -- | A structure, representing both tuples and records
   | StructType {
@@ -146,14 +146,14 @@ data Type =
       -- | The fields of the struct.
       structFields :: Array Fieldname (Strict.ByteString, Mutability, Type),
       -- | The position in source from which this arises.
-      structPos :: !Position
+      structPos :: !DWARFPosition
     }
   -- | A variant, representing both tuples and records
   | VariantType {
       -- | The fields of the struct.
       variantForms :: Array Variantname (Strict.ByteString, Mutability, Type),
       -- | The position in source from which this arises.
-      variantPos :: !Position
+      variantPos :: !DWARFPosition
     }
   -- | An array.  Unlike LLVM arrays, these may be variable-sized
   | ArrayType {
@@ -162,14 +162,14 @@ data Type =
       -- | The type of array elements.
       arrayElemTy :: Type,
       -- | The position in source from which this arises.
-      arrayPos :: !Position
+      arrayPos :: !DWARFPosition
     }
   -- | Pointers, both native and GC
   | PtrType {
       -- | The pointer information
       ptrTy :: !(Ptr GCHeader Type),
       -- | The position in source from which this arises.
-      ptrPos :: !Position
+      ptrPos :: !DWARFPosition
     }
   -- | An integer, possibly signed, with a size.
   | IntType {
@@ -180,24 +180,24 @@ data Type =
       -- | The possible-value intervals for the integer.
       intIntervals :: !(Intervals Integer),
       -- | The position in source from which this arises.
-      intPos :: !Position
+      intPos :: !DWARFPosition
     }
   -- | Floating point types
   | FloatType {
       -- | The size of the float in bits.
       floatSize :: !Word,
       -- | The position in source from which this arises.
-      floatPos :: !Position
+      floatPos :: !DWARFPosition
     }
   -- | A defined type
   | IdType {
       -- | The name for this type.
       idName :: !Typename,
       -- | The position in source from which this arises.
-      idPos :: !Position
+      idPos :: !DWARFPosition
     }
   -- | The unit type, equivalent to SML unit and C/Java void
-  | UnitType !Position
+  | UnitType !DWARFPosition
 
 -- | An expression
 data Exp =
@@ -214,7 +214,7 @@ data Exp =
       -- | The right hand side.
       binopRight :: Exp,
       -- | The position in source from which this arises.
-      binopPos :: !Position
+      binopPos :: !DWARFPosition
     }
   -- | Call a function.
   | Call {
@@ -223,7 +223,7 @@ data Exp =
       -- | The arguments to the function.
       callArgs :: [Exp],
       -- | The position in source from which this arises.
-      callPos :: !Position
+      callPos :: !DWARFPosition
     }
   -- | A unary operation
   | Unop {
@@ -232,7 +232,7 @@ data Exp =
       -- | The operand.
       unopVal ::  Exp,
       -- | The position in source from which this arises.
-      unopPos :: !Position
+      unopPos :: !DWARFPosition
     }
   -- | A conversion from one type to another.
   | Conv {
@@ -241,7 +241,7 @@ data Exp =
       -- | The value being converted.
       convVal :: Exp,
       -- | The position in source from which this arises.
-      convPos :: !Position
+      convPos :: !DWARFPosition
     }
   -- | Treat an expression as if it were the given type regardless of
   -- its actual type.
@@ -251,14 +251,14 @@ data Exp =
       -- | The value being cast.
       castVal :: Exp,
       -- | The position in source from which this arises.
-      castPos :: !Position
+      castPos :: !DWARFPosition
     }
   -- | Address of an LValue
   | AddrOf {
       -- | The value having its address taken.
       addrofVal :: LValue Exp,
       -- | The position in source from which this arises.
-      addrofPos :: !Position
+      addrofPos :: !DWARFPosition
     }
   -- | A structure literal
   | StructLit {
@@ -267,7 +267,7 @@ data Exp =
       -- | The constant's field values
       structLitFields :: Array Fieldname Exp,
       -- | The position in source from which this arises.
-      structLitPos :: !Position
+      structLitPos :: !DWARFPosition
     }
   -- | A variant literal
   | VariantLit {
@@ -278,7 +278,7 @@ data Exp =
       -- | The literal's inner value.
       variantLitVal :: Exp,
       -- | The position in source from which this arises.
-      variantLitPos :: !Position
+      variantLitPos :: !DWARFPosition
     }
   -- | An array literal
   | ArrayLit {
@@ -287,7 +287,7 @@ data Exp =
       -- | The constant's values
       arrayLitVals :: [Exp],
       -- | The position in source from which this arises.
-      arrayLitPos :: !Position
+      arrayLitPos :: !DWARFPosition
     }
   -- | A numerical constant with a given size and signedness XXX add a
   -- floating point constant.
@@ -297,7 +297,7 @@ data Exp =
       -- | The constant's value
       intLitVal :: !Integer,
       -- | The position in source from which this arises.
-      intLitPos :: !Position
+      intLitPos :: !DWARFPosition
     }
   -- | An LValue
   | LValue !(LValue Exp)
@@ -318,7 +318,7 @@ data Global gr =
       -- | The function's body, if it has one
       funcBody :: Maybe (Body Exp (StmElems Exp) gr),
       -- | The position in source from which this arises.
-      funcPos :: !Position
+      funcPos :: !DWARFPosition
     }
   -- | A global variable
   | GlobalVar {
@@ -331,7 +331,7 @@ data Global gr =
       -- | The variable's mutability.
       gvarMutability :: Mutability,
       -- | The position in source from which this arises.
-      gvarPos :: !Position
+      gvarPos :: !DWARFPosition
     }
 
 -- | A module.  Represents a concept similar to an LLVM module.
@@ -351,7 +351,7 @@ data Module gr =
       modGlobals :: Array Globalname (Global gr),
       -- | The position in source from which this arises.  This is here
       -- solely to record filenames in a unified way.
-      modPos :: !Position
+      modPos :: !DWARFPosition
     }
 
 instance Eq Type where
@@ -657,17 +657,18 @@ funcTypePickler :: (GenericXMLString tag, Show tag,
 funcTypePickler =
   let
     revfunc FuncType { funcTyRetTy = retty, funcTyArgTys = argtys,
-                       funcTyPos = pos } = (pos, (argtys, retty))
+                       funcTyPos = pos } = (argtys, retty, pos)
     revfunc _ = error "Can't convert to FuncType"
   in
-    xpWrap (\(pos, (argtys, retty)) -> FuncType { funcTyRetTy = retty,
-                                                  funcTyArgTys = argtys,
-                                                  funcTyPos = pos },
+    xpWrap (\(argtys, retty, pos) -> FuncType { funcTyRetTy = retty,
+                                                funcTyArgTys = argtys,
+                                                funcTyPos = pos },
             revfunc)
-           (xpElem (gxFromString "FuncType") xpickle
-                   (xpPair (xpElemNodes (gxFromString "args")
-                                        (xpList xpickle))
-                           (xpElemNodes (gxFromString "ret") xpickle)))
+           (xpElemNodes (gxFromString "FuncType")
+                        (xpTriple (xpElemNodes (gxFromString "args")
+                                               (xpList xpickle))
+                                  (xpElemNodes (gxFromString "ret") xpickle)
+                                  (xpElemNodes (gxFromString "pos") xpickle)))
 
 fieldPickler :: (GenericXMLString tag, Show tag,
                  GenericXMLString text, Show text) =>
@@ -695,16 +696,17 @@ structTypePickler :: (GenericXMLString tag, Show tag,
 structTypePickler =
   let
     revfunc StructType { structPacked = packed, structFields = fields,
-                         structPos = pos } = ((pos, packed), fields)
+                         structPos = pos } = (packed, (fields, pos))
     revfunc _ = error "Can't convert to StructType"
   in
-    xpWrap (\((pos, packed), fields) -> StructType { structPacked = packed,
+    xpWrap (\(packed, (fields, pos)) -> StructType { structPacked = packed,
                                                      structFields = fields,
                                                      structPos = pos },
             revfunc)
            (xpElem (gxFromString "StructType")
-                   (xpPair xpickle (xpAttr (gxFromString "packed") xpPrim))
-                   (xpElemNodes (gxFromString "fields") fieldsPickler))
+                   (xpAttr (gxFromString "packed") xpPrim)
+                   (xpPair (xpElemNodes (gxFromString "fields") fieldsPickler)
+                           (xpElemNodes (gxFromString "pos") xpickle)))
 
 formPickler :: (GenericXMLString tag, Show tag,
                  GenericXMLString text, Show text) =>
@@ -731,15 +733,17 @@ variantTypePickler :: (GenericXMLString tag, Show tag,
                       PU [NodeG [] tag text] Type
 variantTypePickler =
   let
-    revfunc VariantType { variantForms = forms,
-                          variantPos = pos } = (pos, forms)
+    revfunc VariantType { variantForms = forms, variantPos = pos } =
+      (forms, pos)
     revfunc _ = error "Can't convert to VariantType"
   in
-    xpWrap (\(pos, forms) -> VariantType { variantForms = forms,
+    xpWrap (\(forms, pos) -> VariantType { variantForms = forms,
                                            variantPos = pos },
             revfunc)
-           (xpElem (gxFromString "VariantType") xpickle
-                   (xpElemNodes (gxFromString "forms") formsPickler))
+           (xpElemNodes (gxFromString "VariantType")
+                        (xpPair (xpElemNodes (gxFromString "forms")
+                                             formsPickler)
+                                (xpElemNodes (gxFromString "pos") xpickle)))
 
 arrayTypePickler :: (GenericXMLString tag, Show tag,
                      GenericXMLString text, Show text) =>
@@ -747,29 +751,31 @@ arrayTypePickler :: (GenericXMLString tag, Show tag,
 arrayTypePickler =
   let
     revfunc ArrayType { arrayElemTy = elemty, arrayLen = len,
-                        arrayPos = pos } = ((pos, len), elemty)
+                        arrayPos = pos } = (len, (elemty, pos))
     revfunc _ = error "Can't convert to ArrayType"
   in
-    xpWrap (\((pos, len), elemty) -> ArrayType { arrayElemTy = elemty,
+    xpWrap (\(len, (elemty, pos)) -> ArrayType { arrayElemTy = elemty,
                                                  arrayLen = len,
                                                  arrayPos = pos },
             revfunc)
            (xpElem (gxFromString "ArrayType")
-                   (xpPair xpickle
-                           (xpOption (xpAttr (gxFromString "len") xpPrim)))
-                   xpickle)
+                   (xpOption (xpAttr (gxFromString "len") xpPrim))
+                   (xpPair (xpElemNodes (gxFromString "elem") xpickle)
+                           (xpElemNodes (gxFromString "pos") xpickle)))
 
 ptrTypePickler :: (GenericXMLString tag, Show tag,
                    GenericXMLString text, Show text) =>
                   PU [NodeG [] tag text] Type
 ptrTypePickler =
   let
-    revfunc PtrType { ptrTy = ptrty, ptrPos = pos } = (pos, ptrty)
+    revfunc PtrType { ptrTy = ptrty, ptrPos = pos } = (ptrty, pos)
     revfunc _ = error "Can't convert to PtrType"
   in
-    xpWrap (\(pos, ptrty) -> PtrType { ptrTy = ptrty, ptrPos = pos },
+    xpWrap (\(ptrty, pos) -> PtrType { ptrTy = ptrty, ptrPos = pos },
             revfunc)
-           (xpElem (gxFromString "PtrType") xpickle xpickle)
+           (xpElemNodes (gxFromString "PtrType")
+                        (xpPair (xpElemNodes (gxFromString "inner") xpickle)
+                                (xpElemNodes (gxFromString "pos") xpickle)))
 
 intTypePickler :: (GenericXMLString tag, Show tag,
                    GenericXMLString text, Show text) =>
@@ -778,43 +784,43 @@ intTypePickler =
   let
     revfunc IntType { intSize = size, intSigned = signed,
                       intIntervals = intervals, intPos = pos } =
-      ((pos, signed, size), intervals)
+      ((signed, size), (intervals, pos))
     revfunc _ = error "Can't convert to IntType"
   in
-    xpWrap (\((pos, signed, size), intervals) ->
+    xpWrap (\((signed, size), (intervals, pos)) ->
              IntType { intSize = size, intSigned = signed,
-                       intIntervals = intervals, intPos = pos },
-            revfunc)
+                       intIntervals = intervals, intPos = pos }, revfunc)
            (xpElem (gxFromString "IntType")
-                   (xpTriple xpickle
-                             (xpAttr (gxFromString "signed") xpPrim)
-                             (xpAttr (gxFromString "size") xpPrim))
-                   (xpElemNodes (gxFromString "intervals") xpickle))
+                   (xpPair (xpAttr (gxFromString "signed") xpPrim)
+                           (xpAttr (gxFromString "size") xpPrim))
+                   (xpPair (xpElemNodes (gxFromString "intervals") xpickle)
+                           (xpElemNodes (gxFromString "pos") xpickle)))
 
 floatTypePickler :: (GenericXMLString tag, Show tag,
                      GenericXMLString text, Show text) =>
                     PU [NodeG [] tag text] Type
 floatTypePickler =
   let
-    revfunc FloatType { floatSize = size, floatPos = pos } = (pos, size)
+    revfunc FloatType { floatSize = size, floatPos = pos } = (size, pos)
     revfunc _ = error "Can't convert to FloatType"
   in
-    xpWrap (\(pos, size) -> FloatType { floatSize = size, floatPos = pos },
+    xpWrap (\(size, pos) -> FloatType { floatSize = size, floatPos = pos },
             revfunc)
-           (xpElemAttrs (gxFromString "FloatType")
-                        (xpPair xpickle (xpAttr (gxFromString "size") xpPrim)))
+           (xpElem (gxFromString "FloatType")
+                   (xpAttr (gxFromString "size") xpPrim)
+                   (xpElemNodes (gxFromString "pos") xpickle))
 
 idTypePickler :: (GenericXMLString tag, Show tag,
                   GenericXMLString text, Show text) =>
                  PU [NodeG [] tag text] Type
 idTypePickler =
   let
-    revfunc IdType { idName = tyname, idPos = pos } = (pos, tyname)
+    revfunc IdType { idName = tyname, idPos = pos } = (tyname, pos)
     revfunc _ = error "Can't convert to IdType"
   in
-    xpWrap (\(pos, tyname) -> IdType { idName = tyname, idPos = pos }, revfunc)
-           (xpElemAttrs (gxFromString "IdType") (xpPair xpickle xpickle))
-
+    xpWrap (\(tyname, pos) -> IdType { idName = tyname, idPos = pos }, revfunc)
+           (xpElem (gxFromString "IdType") xpickle
+                   (xpElemNodes (gxFromString "pos") xpickle))
 unitTypePickler :: (GenericXMLString tag, Show tag,
                     GenericXMLString text, Show text) =>
                    PU [NodeG [] tag text] Type
@@ -823,7 +829,9 @@ unitTypePickler =
     revfunc (UnitType pos) = pos
     revfunc _ = error "Can't convert to UnitType"
   in
-    xpWrap (UnitType, revfunc) (xpElemAttrs (gxFromString "UnitType") xpickle)
+    xpWrap (UnitType, revfunc)
+           (xpElemNodes (gxFromString "UnitType")
+                        (xpElemNodes (gxFromString "pos") xpickle))
 
 instance (GenericXMLString tag, Show tag,
           GenericXMLString text, Show text) =>
@@ -851,15 +859,16 @@ binopPickler =
   let
     revfunc Binop { binopOp = op, binopLeft = left,
                     binopRight = right, binopPos = pos } =
-      ((op, pos), (left, right))
+      (op, (left, right, pos))
     revfunc _ = error "Can't convert to Binop"
   in
-    xpWrap (\((op, pos), (left, right)) ->
+    xpWrap (\(op, (left, right, pos)) ->
              Binop { binopOp = op, binopLeft = left,
                      binopRight = right, binopPos = pos }, revfunc)
-           (xpElem (gxFromString "Binop") (xpPair xpickle xpickle)
-                   (xpPair (xpElemNodes (gxFromString "left") xpickle)
-                           (xpElemNodes (gxFromString "right") xpickle)))
+           (xpElem (gxFromString "Binop") xpickle
+                   (xpTriple (xpElemNodes (gxFromString "left") xpickle)
+                             (xpElemNodes (gxFromString "right") xpickle)
+                             (xpElemNodes (gxFromString "pos") xpickle)))
 
 callPickler :: (GenericXMLString tag, Show tag,
                 GenericXMLString text, Show text) =>
@@ -867,15 +876,16 @@ callPickler :: (GenericXMLString tag, Show tag,
 callPickler =
   let
     revfunc Call { callFunc = func, callArgs = args, callPos = pos } =
-      (pos, (func, args))
+      (func, args, pos)
     revfunc _ = error "Can't convert to Call"
   in
-    xpWrap (\(pos, (func, args)) -> Call { callFunc = func, callArgs = args,
-                                           callPos = pos }, revfunc)
-           (xpElem (gxFromString "Call") xpickle
-                   (xpPair (xpElemNodes (gxFromString "func") xpickle)
-                           (xpElemNodes (gxFromString "args")
-                                        (xpList xpickle))))
+    xpWrap (\(func, args, pos) -> Call { callFunc = func, callArgs = args,
+                                         callPos = pos }, revfunc)
+           (xpElemNodes (gxFromString "Call")
+                        (xpTriple (xpElemNodes (gxFromString "func") xpickle)
+                                  (xpElemNodes (gxFromString "args")
+                                               (xpList xpickle))
+                                  (xpElemNodes (gxFromString "pos") xpickle)))
 
 unopPickler :: (GenericXMLString tag, Show tag,
                 GenericXMLString text, Show text) =>
@@ -883,56 +893,58 @@ unopPickler :: (GenericXMLString tag, Show tag,
 unopPickler =
   let
     revfunc Unop { unopOp = op, unopVal = val, unopPos = pos } =
-      ((op, pos), val)
+      (op, (val, pos))
     revfunc _ = error "Can't convert to Unop"
   in
-    xpWrap (\((op, pos), val) -> Unop { unopOp = op, unopVal = val,
+    xpWrap (\(op, (val, pos)) -> Unop { unopOp = op, unopVal = val,
                                         unopPos = pos }, revfunc)
-           (xpElem (gxFromString "Unop") (xpPair xpickle xpickle)
-                   (xpElemNodes (gxFromString "val") xpickle))
+           (xpElem (gxFromString "Unop") xpickle
+                   (xpPair (xpElemNodes (gxFromString "val") xpickle)
+                           (xpElemNodes (gxFromString "pos") xpickle)))
 
 convPickler :: (GenericXMLString tag, Show tag,
                 GenericXMLString text, Show text) =>
                PU [NodeG [] tag text] Exp
 convPickler =
   let
-    revfunc Conv { convVal = val, convTy = ty, convPos = pos } =
-      (pos, (val, ty))
+    revfunc Conv { convVal = val, convTy = ty, convPos = pos } = (val, ty, pos)
     revfunc _ = error "Can't convert to Conv"
   in
-    xpWrap (\(pos, (val, ty)) -> Conv { convVal = val, convTy = ty,
-                                        convPos = pos }, revfunc)
-           (xpElem (gxFromString "Conv") xpickle
-                   (xpPair (xpElemNodes (gxFromString "val") xpickle)
-                           (xpElemNodes (gxFromString "type") xpickle)))
+    xpWrap (\(val, ty, pos) -> Conv { convVal = val, convTy = ty,
+                                      convPos = pos }, revfunc)
+           (xpElemNodes (gxFromString "Conv")
+                        (xpTriple (xpElemNodes (gxFromString "val") xpickle)
+                                  (xpElemNodes (gxFromString "type") xpickle)
+                                  (xpElemNodes (gxFromString "pos") xpickle)))
 
 castPickler :: (GenericXMLString tag, Show tag,
                 GenericXMLString text, Show text) =>
                PU [NodeG [] tag text] Exp
 castPickler =
   let
-    revfunc Cast { castVal = val, castTy = ty, castPos = pos } =
-      (pos, (val, ty))
+    revfunc Cast { castVal = val, castTy = ty, castPos = pos } = (val, ty, pos)
     revfunc _ = error "Can't convert to Cast"
   in
-    xpWrap (\(pos, (val, ty)) -> Cast { castVal = val, castTy = ty,
-                                        castPos = pos }, revfunc)
-           (xpElem (gxFromString "Cast") xpickle
-                   (xpPair (xpElemNodes (gxFromString "val") xpickle)
-                           (xpElemNodes (gxFromString "type") xpickle)))
+    xpWrap (\(val, ty, pos) -> Cast { castVal = val, castTy = ty,
+                                      castPos = pos }, revfunc)
+           (xpElemNodes (gxFromString "Cast")
+                        (xpTriple (xpElemNodes (gxFromString "val") xpickle)
+                                  (xpElemNodes (gxFromString "type") xpickle)
+                                  (xpElemNodes (gxFromString "pos") xpickle)))
 
 addrofPickler :: (GenericXMLString tag, Show tag,
                   GenericXMLString text, Show text) =>
                  PU [NodeG [] tag text] Exp
 addrofPickler =
   let
-    revfunc AddrOf { addrofVal = val, addrofPos = pos } = (pos, val)
+    revfunc AddrOf { addrofVal = val, addrofPos = pos } = (val, pos)
     revfunc _ = error "Can't convert to AddrOf"
   in
-    xpWrap (\(pos, val) -> AddrOf { addrofVal = val, addrofPos = pos },
+    xpWrap (\(val, pos) -> AddrOf { addrofVal = val, addrofPos = pos },
             revfunc)
-           (xpElem (gxFromString "AddrOf") xpickle
-                   (xpElemNodes (gxFromString "val") xpickle))
+           (xpElemNodes (gxFromString "AddrOf")
+                        (xpPair (xpElemNodes (gxFromString "val") xpickle)
+                                (xpElemNodes (gxFromString "pos") xpickle)))
 
 structLitPickler :: (GenericXMLString tag, Show tag,
                      GenericXMLString text, Show text) =>
@@ -940,7 +952,7 @@ structLitPickler :: (GenericXMLString tag, Show tag,
 structLitPickler =
   let
     revfunc StructLit { structLitTy = ty, structLitFields = fields,
-                        structLitPos = pos } = (pos, (ty, fields))
+                        structLitPos = pos } = (ty, fields, pos)
     revfunc _ = error "Can't convert to StructLit"
 
     fieldValsPickler :: (GenericXMLString tag, Show tag,
@@ -950,13 +962,14 @@ structLitPickler =
       xpWrap (\l -> array (toEnum 0, toEnum (length l)) l, assocs)
              (xpList (xpElem (gxFromString "field") xpickle xpickle))
   in
-    xpWrap (\(pos, (ty, fields)) ->
+    xpWrap (\(ty, fields, pos) ->
              StructLit { structLitTy = ty, structLitFields = fields,
                          structLitPos = pos }, revfunc)
-           (xpElem (gxFromString "StructLit") xpickle
-                   (xpPair (xpElemNodes (gxFromString "ty") xpickle)
-                           (xpElemNodes (gxFromString "fields")
-                                        fieldValsPickler)))
+           (xpElemNodes (gxFromString "StructLit")
+                        (xpTriple (xpElemNodes (gxFromString "ty") xpickle)
+                                  (xpElemNodes (gxFromString "fields")
+                                               fieldValsPickler)
+                                  (xpElemNodes (gxFromString "pos") xpickle)))
 
 variantLitPickler :: (GenericXMLString tag, Show tag,
                       GenericXMLString text, Show text) =>
@@ -965,15 +978,16 @@ variantLitPickler =
   let
     revfunc VariantLit { variantLitTy = ty, variantLitVal = val,
                          variantLitForm = form, variantLitPos = pos } =
-      ((form, pos), (ty, val))
+      (form, (ty, val, pos))
     revfunc _ = error "Can't convert to VariantLit"
   in
-    xpWrap (\((form, pos), (ty, val)) ->
+    xpWrap (\(form, (ty, val, pos)) ->
              VariantLit { variantLitTy = ty, variantLitVal = val,
                           variantLitForm = form, variantLitPos = pos }, revfunc)
-           (xpElem (gxFromString "VariantLit") (xpPair xpickle xpickle)
-                   (xpPair (xpElemNodes (gxFromString "ty") xpickle)
-                           (xpElemNodes (gxFromString "val") xpickle)))
+           (xpElem (gxFromString "VariantLit") xpickle
+                   (xpTriple (xpElemNodes (gxFromString "ty") xpickle)
+                             (xpElemNodes (gxFromString "val") xpickle)
+                             (xpElemNodes (gxFromString "pos") xpickle)))
 
 arrayLitPickler :: (GenericXMLString tag, Show tag,
                     GenericXMLString text, Show text) =>
@@ -981,16 +995,16 @@ arrayLitPickler :: (GenericXMLString tag, Show tag,
 arrayLitPickler =
   let
     revfunc ArrayLit { arrayLitTy = ty, arrayLitVals = vals,
-                       arrayLitPos = pos } = (pos, (ty, vals))
+                       arrayLitPos = pos } = (ty, vals, pos)
     revfunc _ = error "Can't convert to ArrayLit"
   in
-    xpWrap (\(pos, (ty, vals)) -> ArrayLit { arrayLitTy = ty,
-                                             arrayLitVals = vals,
-                                             arrayLitPos = pos }, revfunc)
-           (xpElem (gxFromString "ArrayLit") xpickle
-                   (xpPair (xpElemNodes (gxFromString "ty") xpickle)
-                           (xpElemNodes (gxFromString "vals")
-                                        (xpList xpickle))))
+    xpWrap (\(ty, vals, pos) -> ArrayLit { arrayLitTy = ty, arrayLitVals = vals,
+                                           arrayLitPos = pos }, revfunc)
+           (xpElemNodes (gxFromString "ArrayLit")
+                        (xpTriple (xpElemNodes (gxFromString "ty") xpickle)
+                                  (xpElemNodes (gxFromString "vals")
+                                               (xpList xpickle))
+                                  (xpElemNodes (gxFromString "pos") xpickle)))
 
 intLitPickler :: (GenericXMLString tag, Show tag,
                   GenericXMLString text, Show text) =>
@@ -998,14 +1012,15 @@ intLitPickler :: (GenericXMLString tag, Show tag,
 intLitPickler =
   let
     revfunc IntLit { intLitTy = ty, intLitVal = val, intLitPos = pos } =
-      ((pos, val), ty)
+      (val, (ty, pos))
     revfunc _ = error "Can't convert to IntType"
   in
-    xpWrap (\((pos, val), ty) -> IntLit { intLitTy = ty, intLitVal = val,
+    xpWrap (\(val, (ty, pos)) -> IntLit { intLitTy = ty, intLitVal = val,
                                           intLitPos = pos }, revfunc)
            (xpElem (gxFromString "IntType")
-                   (xpPair xpickle (xpAttr (gxFromString "size") xpPrim))
-                   (xpElemNodes (gxFromString "type") xpickle))
+                   (xpAttr (gxFromString "size") xpPrim)
+                   (xpPair (xpElemNodes (gxFromString "type") xpickle)
+                           (xpElemNodes (gxFromString "pos") xpickle)))
 
 lvaluePickler :: (GenericXMLString tag, Show tag,
                     GenericXMLString text, Show text) =>
@@ -1048,7 +1063,7 @@ functionPickler =
   let
     revfunc Function { funcName = fname, funcRetTy = retty, funcValTys = valtys,
                        funcParams = params, funcBody = body, funcPos = pos } =
-      ((fname, pos), (retty, valtys, params, body))
+      (fname, (retty, valtys, params, body, pos))
     revfunc _ = error "Can't convert to Function"
 
     valtysPickler :: (GenericXMLString tag, Show tag,
@@ -1058,17 +1073,18 @@ functionPickler =
       xpWrap (\l -> array (toEnum 0, toEnum (length l)) l, assocs)
              (xpList (xpElem (gxFromString "valty") xpickle xpickle))
   in
-    xpWrap (\((fname, pos), (retty, valtys, params, body)) ->
+    xpWrap (\(fname, (retty, valtys, params, body, pos)) ->
              Function { funcName = fname, funcRetTy = retty,
                         funcValTys = valtys, funcParams = params,
                         funcBody = body, funcPos = pos }, revfunc)
-           (xpElem (gxFromString "Function") (xpPair xpickle xpickle)
-                   (xp4Tuple (xpElemNodes (gxFromString "retty") xpickle)
+           (xpElem (gxFromString "Function") xpickle
+                   (xp5Tuple (xpElemNodes (gxFromString "retty") xpickle)
                              (xpElemNodes (gxFromString "valtys") valtysPickler)
                              (xpElemNodes (gxFromString "params")
                                           (xpList xpickle))
                              (xpOption (xpElemNodes (gxFromString "body")
-                                                    xpickle))))
+                                                    xpickle))
+                             (xpElemNodes (gxFromString "pos") xpickle)))
 
 globalvarPickler :: (GenericXMLString tag, Show tag,
                      GenericXMLString text, Show text) =>
@@ -1077,16 +1093,17 @@ globalvarPickler =
   let
     revfunc GlobalVar { gvarName = gname, gvarTy = ty, gvarInit = init,
                         gvarMutability = mut, gvarPos = pos } =
-      ((gname, mut, pos), (ty, init))
+      ((gname, mut), (ty, init, pos))
     revfunc _ = error "Can't convert to GlobalVar"
   in
-    xpWrap (\((gname, mut, pos), (ty, init)) ->
+    xpWrap (\((gname, mut), (ty, init, pos)) ->
              GlobalVar { gvarName = gname, gvarTy = ty, gvarInit = init,
                          gvarMutability = mut, gvarPos = pos }, revfunc)
-           (xpElem (gxFromString "Function") (xpTriple xpickle xpickle xpickle)
-                   (xpPair (xpElemNodes (gxFromString "type") xpickle)
-                           (xpOption (xpElemNodes (gxFromString "init")
-                                                  xpickle))))
+           (xpElem (gxFromString "Function") (xpPair xpickle xpickle)
+                   (xpTriple (xpElemNodes (gxFromString "type") xpickle)
+                             (xpOption (xpElemNodes (gxFromString "init")
+                                                    xpickle))
+                             (xpElemNodes (gxFromString "pos") xpickle)))
 
 instance (GenericXMLString tag, Show tag,
           GenericXMLString text, Show text,
