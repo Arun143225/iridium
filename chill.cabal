@@ -22,7 +22,8 @@ Library
                         hexpat-pickle, llvm-general-pure, bytestring,
                         unordered-containers, utf8-string, hashtables, dynamic-pp
   hs-source-dirs:       src
-  exposed-modules:      IR.Common.Body
+  exposed-modules:      Control.Monad.LLVM.Metadata.Class
+                        IR.Common.Body
                         IR.Common.LValue,
                         IR.Common.Names,
                         IR.Common.Ptr,
@@ -34,8 +35,8 @@ Library
                         IR.Common.TBAA
                         IR.Common.Transfer
                         IR.FlatIR.Syntax
-                        IR.FlatIR.LLVMGen.Context
-                        IR.FlatIR.LLVMGen.TBAA
+--                        IR.FlatIR.LLVMGen.Context
+--                        IR.FlatIR.LLVMGen.TBAA
 --                        IR.FlatIR.SSAConvert
 --                        IR.FlatIR.LLVMGen
 --                        IR.FlatIR.LLVMGen.CodeGen,
