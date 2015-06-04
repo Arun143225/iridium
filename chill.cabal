@@ -22,7 +22,8 @@ Library
                         hexpat-pickle, llvm-general-pure, bytestring,
                         unordered-containers, utf8-string, hashtables, dynamic-pp
   hs-source-dirs:       src
-  exposed-modules:      Control.Monad.LLVM.Metadata.Class
+  exposed-modules:      Control.Monad.LLVMGen.Metadata
+                        Control.Monad.LLVMGen.Metadata.Class
                         IR.Common.Body
                         IR.Common.LValue,
                         IR.Common.Names,
