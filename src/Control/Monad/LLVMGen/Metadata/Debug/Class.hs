@@ -29,30 +29,22 @@
 -- SUCH DAMAGE.
 {-# OPTIONS_GHC -Wall -Werror #-}
 
-module Control.Monad.LLVMGen.Metadata.Class(
-       MonadMetadata(..)
+module Control.Monad.LLVMGen.Metadata.Debug.Class(
+       MonadDebugMetadata(..)
        ) where
 
-import Data.Word
+import Control.Monad.LLVMGen.Metadata.Class
+import Data.Position.DWARFPosition
+import Data.Position.Filename
 import LLVM.General.AST hiding (Type)
 
--- | A class of monads which create and maintain LLVM metadata.
-class Monad m => MonadMetadata m where
-  -- | Generate a new metadata ID, but don't add any content to it yet.
-  getMetadataID :: m Word
-  -- | Add content to a metadata node
-  addMetadataNode :: Word
-                  -- ^ Name of the metadata being defined.
-                  -> [Maybe Operand]
-                  -- ^ Contents of the metadata.
-                  -> m ()
-
-  -- | Create a new metadata node with the given contents
-  createMetadataNode :: [Maybe Operand]
-                     -- ^ Contents of the metadata.
-                     -> m Word
-  createMetadataNode contents =
-    do
-      idx <- getMetadataID
-      addMetadataNode idx contents
-      return idx
+-- | A class of monads which create and maintain LLVM debug metadata.
+class MonadMetadata m => MonadDebugMetadata m where
+  -- | Get a metadata node for a compilation unit.
+  getCompUnitMD :: FileInfo
+                -- ^ The name of the file.
+                -> m Operand
+  -- | Get a metadata node for a given position.
+  getPositionMD :: DWARFPosition
+                -- ^ The position.
+                -> m (Maybe Operand)
