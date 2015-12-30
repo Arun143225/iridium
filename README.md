@@ -2,7 +2,7 @@ Attention: This library is under active development.  The method of
 generating LLVM is being switched from an FFI binding library to the
 llvm-general library.
 
-CHILL: Common High-level Intermediate Language Library
+Iridium: Common High-level IR Library
 ================
 
 A library whose goal is to produce several common high-level
