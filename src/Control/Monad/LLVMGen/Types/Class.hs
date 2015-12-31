@@ -33,6 +33,25 @@ module Control.Monad.LLVMGen.Types.Class(
        MonadTypes(..)
        ) where
 
+import Control.Monad.CommentBuffer
+import Control.Monad.Comments
+import Control.Monad.Cont
+import Control.Monad.Except
+import Control.Monad.FileLoader
+import Control.Monad.Genpos
+import Control.Monad.Gensym
+import Control.Monad.Keywords
+import Control.Monad.List
+import Control.Monad.MemoryLoader
+import Control.Monad.Messages
+import Control.Monad.Positions
+import Control.Monad.Reader
+import Control.Monad.SkipComments
+import Control.Monad.SourceFiles
+import Control.Monad.State
+import Control.Monad.Symbols
+import Control.Monad.Trans.Journal
+import Control.Monad.Writer
 import IR.FlatIR.Syntax
 
 import qualified LLVM.General.AST as LLVM
@@ -41,3 +60,60 @@ import qualified LLVM.General.AST as LLVM
 class Monad m => MonadTypes m where
   -- | Generate the LLVM type for a given FlatIR type.
   toLLVMType :: Type -> m LLVM.Type
+
+instance MonadTypes m => MonadTypes (CommentBufferT m) where
+  toLLVMType = lift . toLLVMType
+
+instance MonadTypes m => MonadTypes (CommentsT m) where
+  toLLVMType = lift . toLLVMType
+
+instance MonadTypes m => MonadTypes (ContT c m) where
+  toLLVMType = lift . toLLVMType
+
+instance (MonadTypes m) => MonadTypes (ExceptT e m) where
+  toLLVMType = lift . toLLVMType
+
+instance MonadTypes m => MonadTypes (GenposT m) where
+  toLLVMType = lift . toLLVMType
+
+instance MonadTypes m => MonadTypes (GensymT m) where
+  toLLVMType = lift . toLLVMType
+
+instance (MonadTypes m, Monoid w) => MonadTypes (JournalT w m) where
+  toLLVMType = lift . toLLVMType
+
+instance MonadTypes m => MonadTypes (KeywordsT pos tok m) where
+  toLLVMType = lift . toLLVMType
+
+instance MonadTypes m => MonadTypes (ListT m) where
+  toLLVMType = lift . toLLVMType
+
+instance MonadTypes m => MonadTypes (MemoryLoaderT info m) where
+  toLLVMType = lift . toLLVMType
+
+instance (MonadTypes m, Monoid msgs) => MonadTypes (MessagesT msgs msg m) where
+  toLLVMType = lift . toLLVMType
+
+instance MonadTypes m => MonadTypes (PositionsT m) where
+  toLLVMType = lift . toLLVMType
+
+instance MonadTypes m => MonadTypes (ReaderT r m) where
+  toLLVMType = lift . toLLVMType
+
+instance MonadTypes m => MonadTypes (SkipCommentsT m) where
+  toLLVMType = lift . toLLVMType
+
+instance MonadTypes m => MonadTypes (SourceFilesT m) where
+  toLLVMType = lift . toLLVMType
+
+instance MonadTypes m => MonadTypes (FileLoaderT m) where
+  toLLVMType = lift . toLLVMType
+
+instance MonadTypes m => MonadTypes (StateT s m) where
+  toLLVMType = lift . toLLVMType
+
+instance MonadTypes m => MonadTypes (SymbolsT m) where
+  toLLVMType = lift . toLLVMType
+
+instance (MonadTypes m, Monoid w) => MonadTypes (WriterT w m) where
+  toLLVMType = lift . toLLVMType
