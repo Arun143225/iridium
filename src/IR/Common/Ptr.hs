@@ -30,42 +30,33 @@
 {-# OPTIONS_GHC -funbox-strict-fields -Wall -Werror #-}
 {-# LANGUAGE FlexibleInstances, MultiParamTypeClasses, FlexibleContexts #-}
 
--- | This module defines type constructors that represent all GC
--- options.  This allows sharing of GC type metadata amongst the
--- various IR languages.
 module IR.Common.Ptr(
-       -- * GC Type Metadata
+       -- * Tagged Pointer Metadata
        Ptr(..),
 
        -- * Options
-       Mobility(..),
-       PtrClass(..),
        Mutability(..),
        ) where
 
 import Data.Hashable
-import Data.Monoid
-import Data.Word
 import Text.Format
 import Text.XML.Expat.Pickle hiding (Node)
 import Text.XML.Expat.Tree(NodeG)
 
 -- | The type of object pointed to by a pointer
 data Ptr
-       -- | The type of GC object type information.
-       gctype
+       -- | The type of tagged object type information.
+       taggedtype
        -- | The type of native object type information.
        nativetype =
-  -- | An object in GC space
-    GC {
-      -- | The pointer classification of this pointer.
-      gcClass :: !PtrClass,
+  -- | An tagged object
+    Tagged {
       -- | The mutability of the pointed-to data.
-      gcMutability :: !Mutability,
+      taggedMutability :: !Mutability,
       -- | The underlying element type.
-      gcTy :: gctype
+      taggedTy :: !taggedtype
     }
-  -- | An object in non-GC space
+  -- | An object in non-tagged space
   | Native {
       -- | The mutability of the pointed-to data.
       nativeMutability :: !Mutability,
@@ -73,40 +64,6 @@ data Ptr
       nativeTy :: nativetype
     }
     deriving (Eq, Ord)
-
--- | Object mobility.  All native objects are immobile.  GC objects
--- can be mobile or immobile.  Immobile objects must be supported for
--- a sane FFI.
-data Mobility =
-  -- | The object's address may change during execution (specifically,
-  -- due to garbage collection)
-    Mobile
-  -- | The object's address cannot change during execution.  Use to
-  -- allocate buffers for IO, or objects for foreign calls.
-  | Immobile
-    deriving (Eq, Ord, Enum)
-
--- | Indicates the class of pointers.  This is relevant only to
--- pointers to grabage collected objects.
-data PtrClass =
-  -- | A strong GC pointer.  Acts as a "normal" pointer.
-    Strong
-  -- | A soft GC pointer.  Any object which is reachable from the root
-  -- set only by soft pointers or weaker pointers may have all such
-  -- pointers cleared in response to memory pressure.
-  | Soft
-  -- | A weak GC pointer.  Any object which is reachable only from the
-  -- root set only by weak pointers will have all such pointer cleared
-  -- during a collection cycle.
-  | Weak
-  -- | A finalizer GC pointer.  When an object is reachable only by
-  -- finalizers, it will result in the finalizer becoming active.
-  | Finalizer
-  -- | A phantom GC pointer.  These should never be accessed by the
-  -- program code, but will prevent an object's deletion during a
-  -- collection cycle.
-  | Phantom
-    deriving (Eq, Ord, Enum)
 
 -- | Mutability of fields and objects.  Mutability, and particular
 -- variants thereof are of paramount importance during garbage
@@ -147,33 +104,20 @@ instance Monoid Mutability where
   -- Mutable carries no information
   mappend Mutable Mutable = Mutable
 
-instance Hashable Mobility where hashWithSalt s m = s `hashWithSalt` fromEnum m
-instance Hashable PtrClass where hashWithSalt s p = s `hashWithSalt` fromEnum p
-instance Hashable Mutability where hashWithSalt s m = s `hashWithSalt` fromEnum m
+instance Hashable Mutability where
+  hashWithSalt s m = s `hashWithSalt` fromEnum m
 
-instance (Hashable gctype, Hashable nativetype) =>
-         Hashable (Ptr gctype nativetype) where
-  hashWithSalt s GC { gcClass = ptrclass, gcTy = ty, gcMutability = mut } =
-    s `hashWithSalt` (1 :: Word) `hashWithSalt`
-    ptrclass `hashWithSalt`ty `hashWithSalt` mut
-  hashWithSalt s Native { nativeTy = ty, nativeMutability = mut } =
+instance (Hashable taggedtype, Hashable nativetype) =>
+         Hashable (Ptr taggedtype nativetype) where
+  hashWithSalt s Tagged { taggedTy = ty, taggedMutability = mut } =
     s `hashWithSalt` (1 :: Word) `hashWithSalt` ty `hashWithSalt` mut
+  hashWithSalt s Native { nativeTy = ty, nativeMutability = mut } =
+    s `hashWithSalt` (2 :: Word) `hashWithSalt` ty `hashWithSalt` mut
 
-instance Functor (Ptr gctype) where
+instance Functor (Ptr taggedtype) where
   fmap f ptr @ Native { nativeTy = ty } = ptr { nativeTy = f ty }
-  fmap _ ptr @ GC { gcClass = cls, gcMutability = mut, gcTy = ty } =
-    ptr { gcClass = cls, gcMutability = mut, gcTy = ty }
-
-instance Show Mobility where
-  show Mobile = "mobile"
-  show Immobile = "immobile"
-
-instance Show PtrClass where
-  show Strong = "strong"
-  show Soft = "soft"
-  show Weak = "weak"
-  show Finalizer = "finalizer"
-  show Phantom = "phantom"
+  fmap _ ptr @ Tagged { taggedTy = ty, taggedMutability = mut } =
+    ptr { taggedMutability = mut, taggedTy = ty }
 
 instance Show Mutability where
   show Immutable = "immutable"
@@ -182,47 +126,41 @@ instance Show Mutability where
   show Volatile = "volatile"
   show VolatileOnce = "volatileonce"
 
-instance (Show gctype, Show nativetype) =>
-         Show (Ptr gctype nativetype) where
-  show (GC { gcClass = ptrclass, gcTy = ty, gcMutability = mut }) =
-    "gc " ++ show ptrclass ++ " " ++ show ty ++ " " ++ show mut
-  show (Native { nativeTy = ty, nativeMutability = mut }) =
+instance (Show taggedtype, Show nativetype) =>
+         Show (Ptr taggedtype nativetype) where
+  show Tagged { taggedTy = ty, taggedMutability = mut } =
+    "tagged " ++ show ty ++ " " ++ show mut
+  show Native { nativeTy = ty, nativeMutability = mut } =
     "native " ++ show ty ++ " " ++ show mut
-
-instance Format Mobility where
-  format = string . show
-
-instance Format PtrClass where
-  format = string . show
 
 instance Format Mutability where
   format = string . show
 
-instance (Format gctype, Format nativetype) =>
-         Format (Ptr gctype nativetype) where
-  format (GC { gcClass = ptrclass, gcTy = ty, gcMutability = mut }) =
-    string "gc" <+> format ptrclass <+> format ty <+> format mut
-  format (Native { nativeTy = ty, nativeMutability = mut }) =
+instance (Format taggedtype, Format nativetype) =>
+         Format (Ptr taggedtype nativetype) where
+  format Tagged { taggedTy = ty, taggedMutability = mut } =
+    string "tagged" <+> format ty <+> format mut
+  format Native { nativeTy = ty, nativeMutability = mut } =
     string "native" <+> format ty <+> format mut
 
-gcPickler :: (GenericXMLString tag, Show tag,
-              GenericXMLString text, Show text,
-              XmlPickler [NodeG [] tag text] gctype) =>
-             PU [NodeG [] tag text] (Ptr gctype nativetype)
-gcPickler =
+taggedPickler :: (GenericXMLString tag, Show tag,
+                  GenericXMLString text, Show text,
+                  XmlPickler [NodeG [] tag text] taggedtype) =>
+                 PU [NodeG [] tag text] (Ptr taggedtype nativetype)
+taggedPickler =
   let
-    revfunc GC { gcClass = cls, gcMutability = mut, gcTy = ty } =
-      ((cls, mut), ty)
+    revfunc Tagged { taggedTy = ty,
+                     taggedMutability = mut } = (mut, ty)
     revfunc _ = error "can't convert"
   in
-    xpWrap (\((cls, mut), ty) -> GC { gcClass = cls, gcTy = ty,
-                                      gcMutability = mut }, revfunc)
-           (xpElem (gxFromString "GC") (xpPair xpickle xpickle) xpickle)
+    xpWrap (\(mut, ty) -> Tagged { taggedMutability = mut,
+                                   taggedTy = ty }, revfunc)
+           (xpElem (gxFromString "tagged") xpickle xpickle)
 
 nativePickler :: (GenericXMLString tag, Show tag,
                   GenericXMLString text, Show text,
                   XmlPickler [NodeG [] tag text] nativetype) =>
-                 PU [NodeG [] tag text] (Ptr gctype nativetype)
+                 PU [NodeG [] tag text] (Ptr taggedtype nativetype)
 nativePickler =
   let
     revfunc Native { nativeMutability = mut, nativeTy = ty } = (mut, ty)
@@ -233,44 +171,15 @@ nativePickler =
            (xpElem (gxFromString "Native") xpickle xpickle)
 
 instance (GenericXMLString tag, Show tag, GenericXMLString text, Show text,
-          XmlPickler [NodeG [] tag text] gctype,
+          XmlPickler [NodeG [] tag text] taggedtype,
           XmlPickler [NodeG [] tag text] nativetype) =>
-         XmlPickler [NodeG [] tag text] (Ptr gctype nativetype) where
+         XmlPickler [NodeG [] tag text] (Ptr taggedtype nativetype) where
   xpickle =
     let
-      picker GC {} = 0
+      picker Tagged {} = 0
       picker Native {} = 1
     in
-      xpAlt picker [gcPickler, nativePickler]
-
-instance (GenericXMLString tag, Show tag, GenericXMLString text, Show text) =>
-         XmlPickler (Attributes tag text) Mobility where
-  xpickle = xpAlt fromEnum
-                  [xpWrap (const Mobile, const ())
-                          (xpAttrFixed (gxFromString "mobility")
-                                       (gxFromString "strong")),
-                   xpWrap (const Immobile, const ())
-                          (xpAttrFixed (gxFromString "mobility")
-                                       (gxFromString "weak"))]
-
-instance (GenericXMLString tag, Show tag, GenericXMLString text, Show text) =>
-         XmlPickler (Attributes tag text) PtrClass where
-  xpickle = xpAlt fromEnum
-                  [xpWrap (const Strong, const ())
-                          (xpAttrFixed (gxFromString "ptr-class")
-                                       (gxFromString "strong")),
-                   xpWrap (const Weak, const ())
-                          (xpAttrFixed (gxFromString "ptr-class")
-                                       (gxFromString "weak")),
-                   xpWrap (const Soft, const ())
-                          (xpAttrFixed (gxFromString "ptr-class")
-                                       (gxFromString "soft")),
-                   xpWrap (const Finalizer, const ())
-                          (xpAttrFixed (gxFromString "ptr-class")
-                                       (gxFromString "finalizer")),
-                   xpWrap (const Phantom, const ())
-                          (xpAttrFixed (gxFromString "ptr-class")
-                                       (gxFromString "phantom"))]
+      xpAlt picker [taggedPickler, nativePickler]
 
 instance (GenericXMLString tag, Show tag, GenericXMLString text, Show text) =>
          XmlPickler (Attributes tag text) Mutability where
