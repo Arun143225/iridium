@@ -1,4 +1,4 @@
--- Copyright (c) 2015 Eric McCorkle.  All rights reserved.
+-- Copyright (c) 2016 Eric McCorkle.  All rights reserved.
 --
 -- Redistribution and use in source and binary forms, with or without
 -- modification, are permitted provided that the following conditions
@@ -31,7 +31,8 @@
 
 -- | This module contains code that converts FlatIR types into LLVM types.
 module IR.FlatIR.LLVMGen.Types(
-       toLLVMType
+       toLLVMType,
+       genTypeDefs
        ) where
 
 import Data.Array
@@ -50,6 +51,7 @@ toLLVMType :: Graph gr =>
               Module tagty typedesc gr
            -- ^ The FlatIR module being translated
            -> Type tagty
+           -- ^ The FlatIR type to translate.
            -> LLVM.Type
            -- ^ The corresponding LLVM type
 toLLVMType m FuncType { funcTyRetTy = retty, funcTyArgTys = argtys } =
@@ -87,8 +89,8 @@ toLLVMType Module { modTypes = types, modTags = tags }
     TagDesc { tagDescTy = tname } = tags ! tagid
     innerty' = case types ! tname of
       Anon {} -> LLVM.UnName $! fromIntegral $! fromEnum tagid
-      Name { nameStr = bstr } -> LLVM.Name $! Strict.toString bstr
-      TypeDef { typeDefStr = bstr } -> LLVM.Name $! Strict.toString bstr
+      Name { nameStr = bstr } -> LLVM.Name (Strict.toString bstr)
+      TypeDef { typeDefStr = bstr } -> LLVM.Name (Strict.toString bstr)
 
   in
    LLVM.PointerType { LLVM.pointerReferent = LLVM.NamedTypeReference $!
@@ -98,10 +100,11 @@ toLLVMType Module { modTypes = types } IdType { idName = tyid } =
   let
     tyname = case types ! tyid of
       Anon {} -> LLVM.UnName $! fromIntegral $! fromEnum tyid
-      Name { nameStr = bstr } -> LLVM.Name $! Strict.toString bstr
-      TypeDef { typeDefStr = bstr } -> LLVM.Name $! Strict.toString bstr
+      Name { nameStr = bstr } -> LLVM.Name (Strict.toString bstr)
+      TypeDef { typeDefStr = bstr } -> LLVM.Name (Strict.toString bstr)
   in
     LLVM.NamedTypeReference $! tyname
+-- Int and float types are a straightaway conversion
 toLLVMType _ IntType { intSize = 1 } = LLVM.i1
 toLLVMType _ IntType { intSize = 8 } = LLVM.i8
 toLLVMType _ IntType { intSize = 16 } = LLVM.i16
@@ -116,4 +119,27 @@ toLLVMType _ FloatType { floatSize = 80 } = LLVM.x86_fp80
 toLLVMType _ FloatType { floatSize = 128 } = LLVM.fp128
 toLLVMType _ FloatType { floatSize = n } =
   error ("Cannot generate floating point type with " ++ show n ++ " bits")
-toLLVMType _ (UnitType _) = error "Don't generate LLVM for UnitType"
+toLLVMType _ (UnitType _) = LLVM.StructureType { LLVM.elementTypes = [],
+                                                 LLVM.isPacked = False }
+
+-- | Generate the LLVM type for a given Flat IR type.
+genTypeDefs :: Graph gr =>
+               Module tagty typedesc gr
+            -- ^ The FlatIR module being translated
+            -> [LLVM.Definition]
+            -- ^ The corresponding LLVM type
+genTypeDefs m @ Module { modTypes = types } =
+  let
+    -- Anonymous definitions get a nameless entry
+    mapfun (tyid, Anon { anonTy = ty }) =
+      LLVM.TypeDefinition (LLVM.UnName $! fromIntegral $! fromEnum tyid)
+                          (Just $! toLLVMType m ty)
+    -- Name-only definitions get an empty type definition
+    mapfun (_, Name { nameStr = bstr }) =
+      LLVM.TypeDefinition (LLVM.Name (Strict.toString bstr)) Nothing
+    -- Named definitions get both
+    mapfun (_, TypeDef { typeDefStr = bstr, typeDefTy = ty }) =
+      LLVM.TypeDefinition (LLVM.Name (Strict.toString bstr))
+                          (Just $! toLLVMType m ty)
+  in
+    map mapfun (assocs types)
