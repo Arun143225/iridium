@@ -51,9 +51,7 @@ import Text.XML.Expat.Tree(NodeG)
 data GCPtr elemty =
   GCPtr {
     -- | The pointer classification of this pointer.
-    gcPtrClass :: !PtrClass,
-    -- | The element type of the pointer.
-    gcPtrElem :: !elemty
+    gcPtrClass :: !PtrClass
   }
 
 -- | Object mobility.  All native objects are immobile.  Tagged objects
@@ -90,12 +88,21 @@ data PtrClass =
   | Phantom
     deriving (Eq, Ord, Enum)
 
+-- | Extra tag data for GC.
+data GCTag =
+  GCTag {
+    -- | The mobility of the object.
+    gcTagMobility :: !Mobility
+  }
+
 instance Hashable Mobility where hashWithSalt s m = s `hashWithSalt` fromEnum m
 instance Hashable PtrClass where hashWithSalt s p = s `hashWithSalt` fromEnum p
 
 instance (Hashable gctype) => Hashable (GCPtr gctype) where
-  hashWithSalt s GCPtr { gcPtrClass = ptrclass, gcPtrElem = elemty } =
-    s `hashWithSalt` ptrclass `hashWithSalt` elemty
+  hashWithSalt s GCPtr { gcPtrClass = ptrclass } = s `hashWithSalt` ptrclass
+
+instance Hashable GCTag where
+  hashWithSalt s GCTag { gcTagMobility = mob } = s `hashWithSalt` mob
 
 instance Show Mobility where
   show Mobile = "mobile"
@@ -146,10 +153,10 @@ instance (GenericXMLString tag, Show tag, GenericXMLString text, Show text) =>
 instance (GenericXMLString tag, Show tag, GenericXMLString text, Show text,
           XmlPickler [NodeG [] tag text] gctype) =>
          XmlPickler [NodeG [] tag text] (GCPtr gctype) where
-  xpickle =
-    let
-      revfunc GCPtr { gcPtrClass = cls, gcPtrElem = elemty } = (cls, elemty)
-    in
-      xpWrap (\(cls, elemty) -> GCPtr { gcPtrClass = cls,
-                                        gcPtrElem = elemty }, revfunc)
-             (xpElem (gxFromString "gcptr") xpickle xpickle)
+  xpickle = xpWrap (GCPtr, gcPtrClass)
+                   (xpElemAttrs (gxFromString "gcptr") xpickle)
+
+instance (GenericXMLString tag, Show tag, GenericXMLString text, Show text) =>
+         XmlPickler [NodeG [] tag text] GCTag where
+  xpickle = xpWrap (GCTag, gcTagMobility)
+                   (xpElemAttrs (gxFromString "gctag") xpickle)

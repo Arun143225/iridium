@@ -28,7 +28,7 @@
 -- OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 -- SUCH DAMAGE.
 {-# OPTIONS_GHC -funbox-strict-fields -Wall -Werror #-}
-{-# LANGUAGE MultiParamTypeClasses, FlexibleInstances #-}
+{-# LANGUAGE MultiParamTypeClasses, FlexibleInstances, FlexibleContexts #-}
 
 -- | This module defines the FlatIR language.
 --
@@ -46,7 +46,6 @@
 --   * Add exception handling
 module IR.FlatIR.Syntax(
        -- * Indexes
-       GCHeader,
        Id,
        Label,
        Fieldname,
@@ -61,10 +60,9 @@ module IR.FlatIR.Syntax(
 
        -- ** Types
        Type(..),
+       TypeDef(..),
        Ptr(..),
        Mutability(..),
-       Mobility(..),
-       PtrClass(..),
 
        -- ** Execution
        Exp(..),
@@ -129,13 +127,13 @@ import qualified Data.ByteString as Strict
 
 -- | Types.  Types are monomorphic, and correspond roughly with LLVM
 -- types.
-data Type =
+data Type tagty =
   -- | A function type
     FuncType {
       -- | The return type of the function.
-      funcTyRetTy :: Type,
+      funcTyRetTy :: Type tagty,
       -- | The types of the arguments.
-      funcTyArgTys :: [Type],
+      funcTyArgTys :: [Type tagty],
       -- | The position in source from which this arises.
       funcTyPos :: !DWARFPosition
     }
@@ -144,14 +142,16 @@ data Type =
       -- | Whether or not the layout is strict.
       structPacked :: !Bool,
       -- | The fields of the struct.
-      structFields :: Array Fieldname (Strict.ByteString, Mutability, Type),
+      structFields :: Array Fieldname (Strict.ByteString,
+                                       Mutability, Type tagty),
       -- | The position in source from which this arises.
       structPos :: !DWARFPosition
     }
   -- | A variant, representing both tuples and records
   | VariantType {
       -- | The fields of the struct.
-      variantForms :: Array Variantname (Strict.ByteString, Mutability, Type),
+      variantForms :: Array Variantname (Strict.ByteString,
+                                         Mutability, Type tagty),
       -- | The position in source from which this arises.
       variantPos :: !DWARFPosition
     }
@@ -160,14 +160,14 @@ data Type =
       -- | The length of the array, if known.
       arrayLen :: !(Maybe Word),
       -- | The type of array elements.
-      arrayElemTy :: Type,
+      arrayElemTy :: Type tagty,
       -- | The position in source from which this arises.
       arrayPos :: !DWARFPosition
     }
   -- | Pointers, both native and GC
   | PtrType {
       -- | The pointer information
-      ptrTy :: !(Ptr GCHeader Type),
+      ptrTy :: !(Ptr tagty (Type tagty)),
       -- | The position in source from which this arises.
       ptrPos :: !DWARFPosition
     }
@@ -200,28 +200,28 @@ data Type =
   | UnitType !DWARFPosition
 
 -- | An expression
-data Exp =
+data Exp tagty =
   -- | Allocate an object whose type is described by the given header.
   -- XXX probably replace this with a general Alloc instruction,
   -- represeting GC allocation, malloc, and alloca.
-    GCAlloc !GCHeader (Maybe Exp) (Maybe Exp)
+    GCAlloc !Tagname (Maybe (Exp tagty)) (Maybe (Exp tagty))
   -- | A binary operation
   | Binop {
       -- | The operator.
       binopOp :: !Binop,
       -- | The left hand side.
-      binopLeft :: Exp,
+      binopLeft :: Exp tagty,
       -- | The right hand side.
-      binopRight :: Exp,
+      binopRight :: Exp tagty,
       -- | The position in source from which this arises.
       binopPos :: !DWARFPosition
     }
   -- | Call a function.
   | Call {
       -- | The function being called.  Must be a function value.
-      callFunc :: Exp,
+      callFunc :: Exp tagty,
       -- | The arguments to the function.
-      callArgs :: [Exp],
+      callArgs :: [Exp tagty],
       -- | The position in source from which this arises.
       callPos :: !DWARFPosition
     }
@@ -230,16 +230,16 @@ data Exp =
       -- | The operator.
       unopOp :: !Unop,
       -- | The operand.
-      unopVal ::  Exp,
+      unopVal ::  Exp tagty,
       -- | The position in source from which this arises.
       unopPos :: !DWARFPosition
     }
   -- | A conversion from one type to another.
   | Conv {
       -- | The type to which the value is being converted.
-      convTy :: Type,
+      convTy :: Type tagty,
       -- | The value being converted.
-      convVal :: Exp,
+      convVal :: Exp tagty,
       -- | The position in source from which this arises.
       convPos :: !DWARFPosition
     }
@@ -247,45 +247,45 @@ data Exp =
   -- its actual type.
   | Cast {
       -- | The type to which the value is being cast.
-      castTy :: Type,
+      castTy :: Type tagty,
       -- | The value being cast.
-      castVal :: Exp,
+      castVal :: Exp tagty,
       -- | The position in source from which this arises.
       castPos :: !DWARFPosition
     }
   -- | Address of an LValue
   | AddrOf {
       -- | The value having its address taken.
-      addrofVal :: LValue Exp,
+      addrofVal :: LValue (Exp tagty),
       -- | The position in source from which this arises.
       addrofPos :: !DWARFPosition
     }
   -- | A structure literal
   | StructLit {
       -- | The literal's type, must be a struct type.
-      structLitTy :: Type,
+      structLitTy :: Type tagty,
       -- | The constant's field values
-      structLitFields :: Array Fieldname Exp,
+      structLitFields :: Array Fieldname (Exp tagty),
       -- | The position in source from which this arises.
       structLitPos :: !DWARFPosition
     }
   -- | A variant literal
   | VariantLit {
       -- | The literal's type, must be a variant type.
-      variantLitTy :: Type,
+      variantLitTy :: Type tagty,
       -- | The literal's form.
       variantLitForm :: !Variantname,
       -- | The literal's inner value.
-      variantLitVal :: Exp,
+      variantLitVal :: Exp tagty,
       -- | The position in source from which this arises.
       variantLitPos :: !DWARFPosition
     }
   -- | An array literal
   | ArrayLit {
       -- | The constant's type, must be an array type.
-      arrayLitTy :: Type,
+      arrayLitTy :: Type tagty,
       -- | The constant's values
-      arrayLitVals :: [Exp],
+      arrayLitVals :: [Exp tagty],
       -- | The position in source from which this arises.
       arrayLitPos :: !DWARFPosition
     }
@@ -293,30 +293,30 @@ data Exp =
   -- floating point constant.
   | IntLit {
       -- | The constant's type, must be an integer or float type.
-      intLitTy :: Type,
+      intLitTy :: Type tagty,
       -- | The constant's value
       intLitVal :: !Integer,
       -- | The position in source from which this arises.
       intLitPos :: !DWARFPosition
     }
   -- | An LValue
-  | LValue !(LValue Exp)
+  | LValue !(LValue (Exp tagty))
 
 -- | A global value.  Represents a global variable or a function.
-data Global gr =
+data Global tagty gr =
   -- | A function
     Function {
       -- | Name of the function
       funcName :: !DeclNames,
       -- | Return type
-      funcRetTy :: Type,
+      funcRetTy :: Type tagty,
       -- | A map from identifiers for arguments and local variables to
       -- their types.
-      funcValTys :: Array Id Type,
+      funcValTys :: !(Array Id (Type tagty)),
       -- | A list of the identifiers representing arguments
       funcParams :: [Id],
       -- | The function's body, if it has one
-      funcBody :: Maybe (Body Exp (StmElems Exp) gr),
+      funcBody :: Maybe (Body (Exp tagty) (StmElems (Exp tagty)) gr),
       -- | The position in source from which this arises.
       funcPos :: !DWARFPosition
     }
@@ -325,36 +325,56 @@ data Global gr =
       -- | The name of the variable.
       gvarName :: !DeclNames,
       -- | The type of the variable.
-      gvarTy :: Type,
+      gvarTy :: Type tagty,
       -- | The initializer.
-      gvarInit :: Maybe Exp,
+      gvarInit :: Maybe (Exp tagty),
       -- | The variable's mutability.
-      gvarMutability :: Mutability,
+      gvarMutability :: !Mutability,
       -- | The position in source from which this arises.
       gvarPos :: !DWARFPosition
     }
 
+-- | Type definitions.
+data TypeDef tagty =
+    -- | A full, named type definition.
+    TypeDef {
+      -- | The typedef's name.
+      typeDefStr :: !Strict.ByteString,
+      -- | The type.
+      typeDefTy :: !(Type tagty)
+    }
+    -- | A type definition to a name.
+  | Name {
+      -- | The typedef's name.
+      nameStr :: !Strict.ByteString
+    }
+    -- | An anonymous type definition.
+  | Anon {
+      -- | The type.
+      anonTy :: !(Type tagty)
+    }
+
 -- | A module.  Represents a concept similar to an LLVM module.
-data Module gr =
+data Module tagty tagdescty gr =
     Module {
       -- | Name of the module
       modName :: !Strict.ByteString,
       -- | A map from typenames to their proper names and possibly their
       -- definitions
-      modTypes :: Array Typename (Strict.ByteString, Maybe Type),
-      -- | A map from GCHeaders to their definitions
-      modGCHeaders :: Array GCHeader (Typename, Mobility, Mutability),
+      modTypes :: !(Array Typename (TypeDef tagty)),
+      -- | A map from Tagnames to their definitions
+      modTags :: !(Array Tagname (TagDesc tagdescty)),
       -- | Generated GC types (this module will generate the signatures
       -- and accessors)
-      modGenGCs :: [GCHeader],
+      modGenTags :: ![Tagname],
       -- | A map from global names to the corresponding definitions
-      modGlobals :: Array Globalname (Global gr),
+      modGlobals :: !(Array Globalname (Global tagty gr)),
       -- | The position in source from which this arises.  This is here
       -- solely to record filenames in a unified way.
       modPos :: !DWARFPosition
     }
 
-instance Eq Type where
+instance Eq tagty => Eq (Type tagty) where
   FuncType { funcTyRetTy = retty1, funcTyArgTys = params1 } ==
     FuncType { funcTyRetTy = retty2, funcTyArgTys = params2 } =
     retty1 == retty2 && params1 == params2
@@ -380,7 +400,7 @@ instance Eq Type where
   (UnitType _) == (UnitType _) = True
   _ == _ = False
 
-instance Eq Exp where
+instance Eq tagty => Eq (Exp tagty) where
   Binop { binopOp = op1, binopLeft = left1, binopRight = right1 } ==
     Binop { binopOp = op2, binopLeft = left2, binopRight = right2 } =
     op1 == op2 && left1 == left2 && right1 == right2
@@ -414,7 +434,7 @@ instance Eq Exp where
   (LValue lval1) == (LValue lval2) = lval1 == lval2
   _ == _ = False
 
-instance Ord Type where
+instance Ord tagty => Ord (Type tagty) where
   compare FuncType { funcTyRetTy = retty1, funcTyArgTys = params1 }
           FuncType { funcTyRetTy = retty2, funcTyArgTys = params2 } =
     case compare retty1 retty2 of
@@ -466,7 +486,7 @@ instance Ord Type where
   compare _ FloatType {} = GT
   compare (UnitType _) (UnitType _) = EQ
 
-instance Ord Exp where
+instance Ord tagty => Ord (Exp tagty) where
   compare (GCAlloc _ _ _) _ = error "GCAlloc is going away"
   compare _ (GCAlloc _ _ _) = error "GCAlloc is going away"
   compare Binop { binopOp = op1, binopLeft = left1, binopRight = right1 }
@@ -544,7 +564,7 @@ instance Ord Exp where
   compare _ IntLit {} = GT
   compare (LValue lval1) (LValue lval2) = compare lval1 lval2
 
-instance Hashable Type where
+instance Hashable tagty => Hashable (Type tagty) where
   hashWithSalt s FuncType { funcTyRetTy = retty, funcTyArgTys = params } =
     s `hashWithSalt` (0 :: Int) `hashWithSalt` retty `hashWithSalt` params
   hashWithSalt s StructType { structPacked = packed, structFields = fields } =
@@ -568,7 +588,7 @@ instance Hashable Type where
     s `hashWithSalt` (7 :: Int) `hashWithSalt` size
   hashWithSalt s UnitType {} = s `hashWithSalt` (7 :: Int)
 
-instance Hashable Exp where
+instance Hashable tagty => Hashable (Exp tagty) where
   hashWithSalt s Binop { binopOp = op, binopLeft = left, binopRight = right } =
     s `hashWithSalt` (1 :: Int) `hashWithSalt`
     op `hashWithSalt` left `hashWithSalt` right
@@ -596,7 +616,7 @@ instance Hashable Exp where
     s `hashWithSalt` (11 :: Int) `hashWithSalt` lval
   hashWithSalt _ (GCAlloc {}) = error "GCAlloc is going away"
 
-instance RenameType Typename Type where
+instance RenameType Typename (Type tagty) where
   renameType f ty @ FuncType { funcTyRetTy = retty, funcTyArgTys = argtys } =
     ty { funcTyArgTys = renameType f argtys, funcTyRetTy = renameType f retty }
   renameType f ty @ StructType { structFields = fields } =
@@ -610,7 +630,7 @@ instance RenameType Typename Type where
   renameType f ty @ IdType { idName = name } = ty { idName = f name }
   renameType _ ty = ty
 
-instance RenameType Typename Exp where
+instance RenameType Typename (Exp tagty) where
   renameType f e @ Binop { binopLeft = left, binopRight = right } =
     e { binopLeft = renameType f left, binopRight = renameType f right }
   renameType f e @ Call { callFunc = func, callArgs = args } =
@@ -633,7 +653,7 @@ instance RenameType Typename Exp where
   renameType f (LValue l) = LValue (renameType f l)
   renameType _ e = e
 
-instance Rename Id Exp where
+instance Rename Id (Exp tagty) where
   rename f e @ Binop { binopLeft = left, binopRight = right } =
     e { binopLeft = rename f left, binopRight = rename f right }
   rename f e @ Call { callFunc = func, callArgs = args } =
@@ -652,8 +672,9 @@ instance Rename Id Exp where
   rename _ e = e
 
 funcTypePickler :: (GenericXMLString tag, Show tag,
-                    GenericXMLString text, Show text) =>
-                   PU [NodeG [] tag text] Type
+                    GenericXMLString text, Show text,
+                    XmlPickler [NodeG [] tag text] typetag) =>
+                   PU [NodeG [] tag text] (Type typetag)
 funcTypePickler =
   let
     revfunc FuncType { funcTyRetTy = retty, funcTyArgTys = argtys,
@@ -671,9 +692,11 @@ funcTypePickler =
                                   (xpElemNodes (gxFromString "pos") xpickle)))
 
 fieldPickler :: (GenericXMLString tag, Show tag,
-                 GenericXMLString text, Show text) =>
+                 GenericXMLString text, Show text,
+                 XmlPickler [NodeG [] tag text] typetag) =>
                 PU [NodeG [] tag text]
-                   (Fieldname, (Strict.ByteString, Mutability, Type))
+                   (Fieldname, (Strict.ByteString,
+                                Mutability, Type typetag))
 fieldPickler =
   xpWrap (\((idx, fname, mut), ty) -> (idx, (gxToByteString fname, mut, ty)),
           \(idx, (fname, mut, ty)) -> ((idx, gxFromByteString fname, mut), ty))
@@ -683,16 +706,19 @@ fieldPickler =
                  xpickle)
 
 fieldsPickler :: (GenericXMLString tag, Show tag,
-                  GenericXMLString text, Show text) =>
+                  GenericXMLString text, Show text,
+                  XmlPickler [NodeG [] tag text] typetag) =>
                  PU [NodeG [] tag text]
-                    (Array Fieldname (Strict.ByteString, Mutability, Type))
+                    (Array Fieldname (Strict.ByteString,
+                                      Mutability, Type typetag))
 fieldsPickler =
   xpWrap (\l -> array (toEnum 0, toEnum (length l)) l, assocs)
          (xpElemNodes (gxFromString "fields") (xpList fieldPickler))
 
 structTypePickler :: (GenericXMLString tag, Show tag,
-                      GenericXMLString text, Show text) =>
-                     PU [NodeG [] tag text] Type
+                      GenericXMLString text, Show text,
+                      XmlPickler [NodeG [] tag text] typetag) =>
+                     PU [NodeG [] tag text] (Type typetag)
 structTypePickler =
   let
     revfunc StructType { structPacked = packed, structFields = fields,
@@ -709,9 +735,11 @@ structTypePickler =
                            (xpElemNodes (gxFromString "pos") xpickle)))
 
 formPickler :: (GenericXMLString tag, Show tag,
-                 GenericXMLString text, Show text) =>
+                GenericXMLString text, Show text,
+                XmlPickler [NodeG [] tag text] typetag) =>
                 PU [NodeG [] tag text]
-                   (Variantname, (Strict.ByteString, Mutability, Type))
+                   (Variantname, (Strict.ByteString,
+                                  Mutability, Type typetag))
 formPickler =
   xpWrap (\((idx, fname, mut), ty) -> (idx, (gxToByteString fname, mut, ty)),
           \(idx, (fname, mut, ty)) -> ((idx, gxFromByteString fname, mut), ty))
@@ -721,16 +749,19 @@ formPickler =
                  xpickle)
 
 formsPickler :: (GenericXMLString tag, Show tag,
-                  GenericXMLString text, Show text) =>
+                 GenericXMLString text, Show text,
+                 XmlPickler [NodeG [] tag text] typetag) =>
                  PU [NodeG [] tag text]
-                    (Array Variantname (Strict.ByteString, Mutability, Type))
+                    (Array Variantname (Strict.ByteString,
+                                        Mutability, Type typetag))
 formsPickler =
   xpWrap (\l -> array (toEnum 0, toEnum (length l)) l, assocs)
          (xpElemNodes (gxFromString "forms") (xpList formPickler))
 
 variantTypePickler :: (GenericXMLString tag, Show tag,
-                       GenericXMLString text, Show text) =>
-                      PU [NodeG [] tag text] Type
+                       GenericXMLString text, Show text,
+                       XmlPickler [NodeG [] tag text] typetag) =>
+                      PU [NodeG [] tag text] (Type typetag)
 variantTypePickler =
   let
     revfunc VariantType { variantForms = forms, variantPos = pos } =
@@ -746,8 +777,9 @@ variantTypePickler =
                                 (xpElemNodes (gxFromString "pos") xpickle)))
 
 arrayTypePickler :: (GenericXMLString tag, Show tag,
-                     GenericXMLString text, Show text) =>
-                    PU [NodeG [] tag text] Type
+                     GenericXMLString text, Show text,
+                     XmlPickler [NodeG [] tag text] typetag) =>
+                    PU [NodeG [] tag text] (Type typetag)
 arrayTypePickler =
   let
     revfunc ArrayType { arrayElemTy = elemty, arrayLen = len,
@@ -764,8 +796,9 @@ arrayTypePickler =
                            (xpElemNodes (gxFromString "pos") xpickle)))
 
 ptrTypePickler :: (GenericXMLString tag, Show tag,
-                   GenericXMLString text, Show text) =>
-                  PU [NodeG [] tag text] Type
+                   GenericXMLString text, Show text,
+                   XmlPickler [NodeG [] tag text] typetag) =>
+                  PU [NodeG [] tag text] (Type typetag)
 ptrTypePickler =
   let
     revfunc PtrType { ptrTy = ptrty, ptrPos = pos } = (ptrty, pos)
@@ -778,8 +811,9 @@ ptrTypePickler =
                                 (xpElemNodes (gxFromString "pos") xpickle)))
 
 intTypePickler :: (GenericXMLString tag, Show tag,
-                   GenericXMLString text, Show text) =>
-                  PU [NodeG [] tag text] Type
+                   GenericXMLString text, Show text,
+                   XmlPickler [NodeG [] tag text] typetag) =>
+                  PU [NodeG [] tag text] (Type typetag)
 intTypePickler =
   let
     revfunc IntType { intSize = size, intSigned = signed,
@@ -797,8 +831,9 @@ intTypePickler =
                            (xpElemNodes (gxFromString "pos") xpickle)))
 
 floatTypePickler :: (GenericXMLString tag, Show tag,
-                     GenericXMLString text, Show text) =>
-                    PU [NodeG [] tag text] Type
+                     GenericXMLString text, Show text,
+                     XmlPickler [NodeG [] tag text] typetag) =>
+                    PU [NodeG [] tag text] (Type typetag)
 floatTypePickler =
   let
     revfunc FloatType { floatSize = size, floatPos = pos } = (size, pos)
@@ -811,8 +846,9 @@ floatTypePickler =
                    (xpElemNodes (gxFromString "pos") xpickle))
 
 idTypePickler :: (GenericXMLString tag, Show tag,
-                  GenericXMLString text, Show text) =>
-                 PU [NodeG [] tag text] Type
+                  GenericXMLString text, Show text,
+                  XmlPickler [NodeG [] tag text] typetag) =>
+                 PU [NodeG [] tag text] (Type typetag)
 idTypePickler =
   let
     revfunc IdType { idName = tyname, idPos = pos } = (tyname, pos)
@@ -822,8 +858,9 @@ idTypePickler =
            (xpElem (gxFromString "IdType") xpickle
                    (xpElemNodes (gxFromString "pos") xpickle))
 unitTypePickler :: (GenericXMLString tag, Show tag,
-                    GenericXMLString text, Show text) =>
-                   PU [NodeG [] tag text] Type
+                    GenericXMLString text, Show text,
+                    XmlPickler [NodeG [] tag text] typetag) =>
+                   PU [NodeG [] tag text] (Type typetag)
 unitTypePickler =
   let
     revfunc (UnitType pos) = pos
@@ -833,9 +870,9 @@ unitTypePickler =
            (xpElemNodes (gxFromString "UnitType")
                         (xpElemNodes (gxFromString "pos") xpickle))
 
-instance (GenericXMLString tag, Show tag,
-          GenericXMLString text, Show text) =>
-         XmlPickler [NodeG [] tag text] Type where
+instance (GenericXMLString tag, Show tag, GenericXMLString text, Show text,
+          XmlPickler [NodeG [] tag text] typetag) =>
+         XmlPickler [NodeG [] tag text] (Type typetag) where
   xpickle =
     let
       picker FuncType {} = 0
@@ -853,8 +890,9 @@ instance (GenericXMLString tag, Show tag,
                     floatTypePickler, idTypePickler, unitTypePickler ]
 
 binopPickler :: (GenericXMLString tag, Show tag,
-                 GenericXMLString text, Show text) =>
-                PU [NodeG [] tag text] Exp
+                 GenericXMLString text, Show text,
+                 XmlPickler [NodeG [] tag text] typetag) =>
+                PU [NodeG [] tag text] (Exp typetag)
 binopPickler =
   let
     revfunc Binop { binopOp = op, binopLeft = left,
@@ -871,8 +909,9 @@ binopPickler =
                              (xpElemNodes (gxFromString "pos") xpickle)))
 
 callPickler :: (GenericXMLString tag, Show tag,
-                GenericXMLString text, Show text) =>
-               PU [NodeG [] tag text] Exp
+                GenericXMLString text, Show text,
+                XmlPickler [NodeG [] tag text] typetag) =>
+               PU [NodeG [] tag text] (Exp typetag)
 callPickler =
   let
     revfunc Call { callFunc = func, callArgs = args, callPos = pos } =
@@ -888,8 +927,9 @@ callPickler =
                                   (xpElemNodes (gxFromString "pos") xpickle)))
 
 unopPickler :: (GenericXMLString tag, Show tag,
-                GenericXMLString text, Show text) =>
-               PU [NodeG [] tag text] Exp
+                GenericXMLString text, Show text,
+                XmlPickler [NodeG [] tag text] typetag) =>
+               PU [NodeG [] tag text] (Exp typetag)
 unopPickler =
   let
     revfunc Unop { unopOp = op, unopVal = val, unopPos = pos } =
@@ -903,8 +943,9 @@ unopPickler =
                            (xpElemNodes (gxFromString "pos") xpickle)))
 
 convPickler :: (GenericXMLString tag, Show tag,
-                GenericXMLString text, Show text) =>
-               PU [NodeG [] tag text] Exp
+                GenericXMLString text, Show text,
+                XmlPickler [NodeG [] tag text] typetag) =>
+               PU [NodeG [] tag text] (Exp typetag)
 convPickler =
   let
     revfunc Conv { convVal = val, convTy = ty, convPos = pos } = (val, ty, pos)
@@ -918,8 +959,9 @@ convPickler =
                                   (xpElemNodes (gxFromString "pos") xpickle)))
 
 castPickler :: (GenericXMLString tag, Show tag,
-                GenericXMLString text, Show text) =>
-               PU [NodeG [] tag text] Exp
+                GenericXMLString text, Show text,
+                XmlPickler [NodeG [] tag text] typetag) =>
+               PU [NodeG [] tag text] (Exp typetag)
 castPickler =
   let
     revfunc Cast { castVal = val, castTy = ty, castPos = pos } = (val, ty, pos)
@@ -933,8 +975,9 @@ castPickler =
                                   (xpElemNodes (gxFromString "pos") xpickle)))
 
 addrofPickler :: (GenericXMLString tag, Show tag,
-                  GenericXMLString text, Show text) =>
-                 PU [NodeG [] tag text] Exp
+                  GenericXMLString text, Show text,
+                  XmlPickler [NodeG [] tag text] typetag) =>
+                 PU [NodeG [] tag text] (Exp typetag)
 addrofPickler =
   let
     revfunc AddrOf { addrofVal = val, addrofPos = pos } = (val, pos)
@@ -947,8 +990,9 @@ addrofPickler =
                                 (xpElemNodes (gxFromString "pos") xpickle)))
 
 structLitPickler :: (GenericXMLString tag, Show tag,
-                     GenericXMLString text, Show text) =>
-                    PU [NodeG [] tag text] Exp
+                     GenericXMLString text, Show text,
+                     XmlPickler [NodeG [] tag text] typetag) =>
+                    PU [NodeG [] tag text] (Exp typetag)
 structLitPickler =
   let
     revfunc StructLit { structLitTy = ty, structLitFields = fields,
@@ -956,8 +1000,9 @@ structLitPickler =
     revfunc _ = error "Can't convert to StructLit"
 
     fieldValsPickler :: (GenericXMLString tag, Show tag,
-                         GenericXMLString text, Show text) =>
-                        PU [NodeG [] tag text] (Array Fieldname Exp)
+                         GenericXMLString text, Show text,
+                         XmlPickler [NodeG [] tag text] typetag) =>
+                        PU [NodeG [] tag text] (Array Fieldname (Exp typetag))
     fieldValsPickler =
       xpWrap (\l -> array (toEnum 0, toEnum (length l)) l, assocs)
              (xpList (xpElem (gxFromString "field") xpickle xpickle))
@@ -972,8 +1017,9 @@ structLitPickler =
                                   (xpElemNodes (gxFromString "pos") xpickle)))
 
 variantLitPickler :: (GenericXMLString tag, Show tag,
-                      GenericXMLString text, Show text) =>
-                     PU [NodeG [] tag text] Exp
+                      GenericXMLString text, Show text,
+                      XmlPickler [NodeG [] tag text] typetag) =>
+                     PU [NodeG [] tag text] (Exp typetag)
 variantLitPickler =
   let
     revfunc VariantLit { variantLitTy = ty, variantLitVal = val,
@@ -990,8 +1036,9 @@ variantLitPickler =
                              (xpElemNodes (gxFromString "pos") xpickle)))
 
 arrayLitPickler :: (GenericXMLString tag, Show tag,
-                    GenericXMLString text, Show text) =>
-                   PU [NodeG [] tag text] Exp
+                    GenericXMLString text, Show text,
+                    XmlPickler [NodeG [] tag text] typetag) =>
+                   PU [NodeG [] tag text] (Exp typetag)
 arrayLitPickler =
   let
     revfunc ArrayLit { arrayLitTy = ty, arrayLitVals = vals,
@@ -1007,8 +1054,9 @@ arrayLitPickler =
                                   (xpElemNodes (gxFromString "pos") xpickle)))
 
 intLitPickler :: (GenericXMLString tag, Show tag,
-                  GenericXMLString text, Show text) =>
-                 PU [NodeG [] tag text] Exp
+                  GenericXMLString text, Show text,
+                  XmlPickler [NodeG [] tag text] typetag) =>
+                 PU [NodeG [] tag text] (Exp typetag)
 intLitPickler =
   let
     revfunc IntLit { intLitTy = ty, intLitVal = val, intLitPos = pos } =
@@ -1023,8 +1071,9 @@ intLitPickler =
                            (xpElemNodes (gxFromString "pos") xpickle)))
 
 lvaluePickler :: (GenericXMLString tag, Show tag,
-                    GenericXMLString text, Show text) =>
-                   PU [NodeG [] tag text] Exp
+                  GenericXMLString text, Show text,
+                  XmlPickler [NodeG [] tag text] typetag) =>
+                 PU [NodeG [] tag text] (Exp typetag)
 lvaluePickler =
   let
     revfunc (LValue lval) = lval
@@ -1032,9 +1081,9 @@ lvaluePickler =
   in
     xpWrap (LValue, revfunc) (xpElemNodes (gxFromString "LValue") xpickle)
 
-instance (GenericXMLString tag, Show tag,
-          GenericXMLString text, Show text) =>
-         XmlPickler [NodeG [] tag text] Exp where
+instance (GenericXMLString tag, Show tag, GenericXMLString text, Show text,
+          XmlPickler [NodeG [] tag text] typetag) =>
+         XmlPickler [NodeG [] tag text] (Exp typetag) where
   xpickle =
     let
       picker GCAlloc {} = 0
@@ -1056,9 +1105,9 @@ instance (GenericXMLString tag, Show tag,
                     intLitPickler, lvaluePickler ]
 
 functionPickler :: (GenericXMLString tag, Show tag,
-                    GenericXMLString text, Show text,
-                    Graph gr) =>
-                   PU [NodeG [] tag text] (Global gr)
+                    GenericXMLString text, Show text, Graph gr,
+                    XmlPickler [NodeG [] tag text] tagty) =>
+                   PU [NodeG [] tag text] (Global tagty gr)
 functionPickler =
   let
     revfunc Function { funcName = fname, funcRetTy = retty, funcValTys = valtys,
@@ -1067,8 +1116,9 @@ functionPickler =
     revfunc _ = error "Can't convert to Function"
 
     valtysPickler :: (GenericXMLString tag, Show tag,
-                      GenericXMLString text, Show text) =>
-                     PU [NodeG [] tag text] (Array Id Type)
+                      GenericXMLString text, Show text,
+                      XmlPickler [NodeG [] tag text] tagty) =>
+                     PU [NodeG [] tag text] (Array Id (Type tagty))
     valtysPickler =
       xpWrap (\l -> array (toEnum 0, toEnum (length l)) l, assocs)
              (xpList (xpElem (gxFromString "valty") xpickle xpickle))
@@ -1087,8 +1137,9 @@ functionPickler =
                              (xpElemNodes (gxFromString "pos") xpickle)))
 
 globalvarPickler :: (GenericXMLString tag, Show tag,
-                     GenericXMLString text, Show text) =>
-                    PU [NodeG [] tag text] (Global gr)
+                     GenericXMLString text, Show text,
+                    XmlPickler [NodeG [] tag text] tagty) =>
+                    PU [NodeG [] tag text] (Global tagty gr)
 globalvarPickler =
   let
     revfunc GlobalVar { gvarName = gname, gvarTy = ty, gvarInit = init,
@@ -1105,10 +1156,9 @@ globalvarPickler =
                                                     xpickle))
                              (xpElemNodes (gxFromString "pos") xpickle)))
 
-instance (GenericXMLString tag, Show tag,
-          GenericXMLString text, Show text,
-          Graph gr) =>
-         XmlPickler [NodeG [] tag text] (Global gr) where
+instance (GenericXMLString tag, Show tag, GenericXMLString text, Show text,
+          Graph gr, XmlPickler [NodeG [] tag text] tagty) =>
+         XmlPickler [NodeG [] tag text] (Global tagty gr) where
   xpickle =
     let
       picker Function {} = 0

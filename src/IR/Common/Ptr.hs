@@ -33,12 +33,14 @@
 module IR.Common.Ptr(
        -- * Tagged Pointer Metadata
        Ptr(..),
+       TagDesc(..),
 
        -- * Options
        Mutability(..),
        ) where
 
 import Data.Hashable
+import IR.Common.Names
 import Text.Format
 import Text.XML.Expat.Pickle hiding (Node)
 import Text.XML.Expat.Tree(NodeG)
@@ -46,15 +48,17 @@ import Text.XML.Expat.Tree(NodeG)
 -- | The type of object pointed to by a pointer
 data Ptr
        -- | The type of tagged object type information.
-       taggedtype
+       tagdata
        -- | The type of native object type information.
        nativetype =
   -- | An tagged object
     Tagged {
       -- | The mutability of the pointed-to data.
       taggedMutability :: !Mutability,
-      -- | The underlying element type.
-      taggedTy :: !taggedtype
+      -- | The name of the tag descriptor.
+      taggedTag :: !Tagname,
+      -- | The tag header metadata.
+      taggedData :: !tagdata
     }
   -- | An object in non-tagged space
   | Native {
@@ -64,6 +68,17 @@ data Ptr
       nativeTy :: nativetype
     }
     deriving (Eq, Ord)
+
+-- | A type descriptor pointed to by tag headers.
+data TagDesc tagdata =
+  TagDesc {
+    -- | Mutability of the object described by this descriptor.
+    tagDescMutability :: !Mutability,
+    -- | Name of the underlying type described by this descriptor.
+    tagDescTy :: !Typename,
+    -- | Extra metadata contained in this descriptor.
+    tagDescData :: !tagdata
+  }
 
 -- | Mutability of fields and objects.  Mutability, and particular
 -- variants thereof are of paramount importance during garbage
@@ -107,17 +122,24 @@ instance Monoid Mutability where
 instance Hashable Mutability where
   hashWithSalt s m = s `hashWithSalt` fromEnum m
 
-instance (Hashable taggedtype, Hashable nativetype) =>
-         Hashable (Ptr taggedtype nativetype) where
-  hashWithSalt s Tagged { taggedTy = ty, taggedMutability = mut } =
-    s `hashWithSalt` (1 :: Word) `hashWithSalt` ty `hashWithSalt` mut
+instance (Hashable tagdata, Hashable nativetype) =>
+         Hashable (Ptr tagdata nativetype) where
+  hashWithSalt s Tagged { taggedTag = tag, taggedData = dat,
+                          taggedMutability = mut } =
+    s `hashWithSalt` (1 :: Word) `hashWithSalt`
+    tag `hashWithSalt` dat `hashWithSalt` mut
   hashWithSalt s Native { nativeTy = ty, nativeMutability = mut } =
     s `hashWithSalt` (2 :: Word) `hashWithSalt` ty `hashWithSalt` mut
 
-instance Functor (Ptr taggedtype) where
+instance Hashable tagdata => Hashable (TagDesc tagdata) where
+  hashWithSalt s TagDesc { tagDescTy = ty, tagDescData = dat,
+                           tagDescMutability = mut } =
+    s `hashWithSalt` ty `hashWithSalt` dat `hashWithSalt` mut
+
+instance Functor (Ptr tagdata) where
   fmap f ptr @ Native { nativeTy = ty } = ptr { nativeTy = f ty }
-  fmap _ ptr @ Tagged { taggedTy = ty, taggedMutability = mut } =
-    ptr { taggedMutability = mut, taggedTy = ty }
+  fmap _ Tagged { taggedTag = tag, taggedData = dat, taggedMutability = mut } =
+    Tagged { taggedTag = tag, taggedData = dat, taggedMutability = mut }
 
 instance Show Mutability where
   show Immutable = "immutable"
@@ -126,41 +148,39 @@ instance Show Mutability where
   show Volatile = "volatile"
   show VolatileOnce = "volatileonce"
 
-instance (Show taggedtype, Show nativetype) =>
-         Show (Ptr taggedtype nativetype) where
-  show Tagged { taggedTy = ty, taggedMutability = mut } =
-    "tagged " ++ show ty ++ " " ++ show mut
-  show Native { nativeTy = ty, nativeMutability = mut } =
-    "native " ++ show ty ++ " " ++ show mut
-
 instance Format Mutability where
   format = string . show
 
-instance (Format taggedtype, Format nativetype) =>
-         Format (Ptr taggedtype nativetype) where
-  format Tagged { taggedTy = ty, taggedMutability = mut } =
-    string "tagged" <+> format ty <+> format mut
+instance (Format tagdata, Format nativetype) =>
+         Format (Ptr tagdata nativetype) where
+  format Tagged { taggedTag = tag, taggedData = dat, taggedMutability = mut } =
+    string "tagged" <+> format mut <+> format dat <+> format tag
   format Native { nativeTy = ty, nativeMutability = mut } =
-    string "native" <+> format ty <+> format mut
+    string "native" <+> format mut <+> format ty
+
+instance Format tagdata => Format (TagDesc tagdata) where
+  format TagDesc { tagDescTy = ty, tagDescData = dat,
+                   tagDescMutability = mut } =
+    string "typedesc" <+> format mut <+> format ty <+> format dat
 
 taggedPickler :: (GenericXMLString tag, Show tag,
                   GenericXMLString text, Show text,
-                  XmlPickler [NodeG [] tag text] taggedtype) =>
-                 PU [NodeG [] tag text] (Ptr taggedtype nativetype)
+                  XmlPickler [NodeG [] tag text] tagdata) =>
+                 PU [NodeG [] tag text] (Ptr tagdata nativetype)
 taggedPickler =
   let
-    revfunc Tagged { taggedTy = ty,
-                     taggedMutability = mut } = (mut, ty)
+    revfunc Tagged { taggedTag = tag, taggedData = dat,
+                     taggedMutability = mut } = ((mut, tag), dat)
     revfunc _ = error "can't convert"
   in
-    xpWrap (\(mut, ty) -> Tagged { taggedMutability = mut,
-                                   taggedTy = ty }, revfunc)
-           (xpElem (gxFromString "tagged") xpickle xpickle)
+    xpWrap (\((mut, tag), dat) -> Tagged { taggedData = dat, taggedTag = tag,
+                                           taggedMutability = mut }, revfunc)
+           (xpElem (gxFromString "tagged") (xpPair xpickle xpickle) xpickle)
 
 nativePickler :: (GenericXMLString tag, Show tag,
                   GenericXMLString text, Show text,
                   XmlPickler [NodeG [] tag text] nativetype) =>
-                 PU [NodeG [] tag text] (Ptr taggedtype nativetype)
+                 PU [NodeG [] tag text] (Ptr tagdata nativetype)
 nativePickler =
   let
     revfunc Native { nativeMutability = mut, nativeTy = ty } = (mut, ty)
@@ -171,15 +191,25 @@ nativePickler =
            (xpElem (gxFromString "Native") xpickle xpickle)
 
 instance (GenericXMLString tag, Show tag, GenericXMLString text, Show text,
-          XmlPickler [NodeG [] tag text] taggedtype,
+          XmlPickler [NodeG [] tag text] tagdata,
           XmlPickler [NodeG [] tag text] nativetype) =>
-         XmlPickler [NodeG [] tag text] (Ptr taggedtype nativetype) where
+         XmlPickler [NodeG [] tag text] (Ptr tagdata nativetype) where
   xpickle =
     let
       picker Tagged {} = 0
       picker Native {} = 1
     in
       xpAlt picker [taggedPickler, nativePickler]
+
+instance (GenericXMLString tag, Show tag, GenericXMLString text, Show text,
+          XmlPickler [NodeG [] tag text] tagdata) =>
+         XmlPickler [NodeG [] tag text] (TagDesc tagdata) where
+  xpickle =
+    xpWrap (\((ty, mut), dat) -> TagDesc { tagDescTy = ty, tagDescData = dat,
+                                           tagDescMutability = mut },
+            \TagDesc { tagDescTy = ty, tagDescData = dat,
+                       tagDescMutability = mut } -> ((ty, mut), dat))
+           (xpElem (gxFromString "TagDesc") (xpPair xpickle xpickle) xpickle)
 
 instance (GenericXMLString tag, Show tag, GenericXMLString text, Show text) =>
          XmlPickler (Attributes tag text) Mutability where

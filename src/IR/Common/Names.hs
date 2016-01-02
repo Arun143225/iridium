@@ -38,13 +38,13 @@ module IR.Common.Names(
        Variantname,
        Typename,
        Globalname,
-       GCHeader
+       Tagname,
+       typenameId
        ) where
 
 import Data.Array
 import Data.Graph.Inductive.Graph(Node)
 import Data.Hashable
-import Data.Word
 import Text.Format
 import Text.XML.Expat.Pickle hiding (Node)
 import Text.XML.Expat.Tree(NodeG)
@@ -89,8 +89,8 @@ newtype Typename = Typename { typenameId :: Word }
 newtype Globalname = Globalname { globalnameId :: Word }
   deriving (Ord, Eq, Ix)
 
--- | A header given to GCAlloc representing the type being allocated
-newtype GCHeader = GCHeader { gcHeaderId :: Word }
+-- | A tag name, indexes tags
+newtype Tagname = Tagname { tagId :: Word }
   deriving (Ord, Eq, Ix)
 
 instance Hashable Label where
@@ -111,8 +111,8 @@ instance Hashable Variantname where
 instance Hashable Typename where
   hashWithSalt s (Typename n) = s `hashWithSalt` n
 
-instance Hashable GCHeader where
-  hashWithSalt s (GCHeader n) = s `hashWithSalt` n
+instance Hashable Tagname where
+  hashWithSalt s (Tagname n) = s `hashWithSalt` n
 
 instance Format DeclNames where
   format = bytestring . displayName
@@ -131,6 +131,12 @@ instance Format Id where
 
 instance Format Globalname where
   format (Globalname g) = string "@" <> format g
+
+instance Format Typename where
+  format (Typename t) = string "%t" <> format t
+
+instance Format Tagname where
+  format (Tagname t) = string "%tag" <> format t
 
 instance Enum Label where
   toEnum = Label
@@ -156,9 +162,9 @@ instance Enum Typename where
   toEnum = Typename . toEnum
   fromEnum = fromEnum . typenameId
 
-instance Enum GCHeader where
-  toEnum = GCHeader . toEnum
-  fromEnum = fromEnum . gcHeaderId
+instance Enum Tagname where
+  toEnum = Tagname . toEnum
+  fromEnum = fromEnum . tagId
 
 instance (GenericXMLString tag, Show tag, GenericXMLString text, Show text) =>
          XmlPickler [NodeG [] tag text] DeclNames where
@@ -242,12 +248,12 @@ instance (GenericXMLString tag, Show tag, GenericXMLString text, Show text) =>
                    (xpAttr (gxFromString "globalname") xpPrim)
 
 instance (GenericXMLString tag, Show tag, GenericXMLString text, Show text) =>
-         XmlPickler [NodeG [] tag text] GCHeader where
-  xpickle = xpWrap (GCHeader, gcHeaderId)
-                   (xpElemNodes (gxFromString "GCHeader")
+         XmlPickler [NodeG [] tag text] Tagname where
+  xpickle = xpWrap (Tagname, tagId)
+                   (xpElemNodes (gxFromString "Tagname")
                                 (xpContent xpPrim))
 
 instance (GenericXMLString tag, Show tag, GenericXMLString text, Show text) =>
-         XmlPickler (Attributes tag text) GCHeader where
-  xpickle = xpWrap (GCHeader, gcHeaderId)
-                   (xpAttr (gxFromString "gc-header") xpPrim)
+         XmlPickler (Attributes tag text) Tagname where
+  xpickle = xpWrap (Tagname, tagId)
+                   (xpAttr (gxFromString "tagname") xpPrim)
