@@ -33,7 +33,7 @@
 -- intrinsic functions that access and modify the fields of a GC
 -- object.  This code is later generated (and very likely inlined) in
 -- the GC backend.
-module IR.FlatIR.LLVMGen.GCAccessors(
+module IR.FlatIR.LLVMGen.Tags(
        genAccessors
        ) where
 
