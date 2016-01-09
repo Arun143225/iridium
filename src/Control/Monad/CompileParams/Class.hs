@@ -68,7 +68,9 @@ data CompileParamVals =
     -- | The runtime version.
     cpRuntimeVersion :: Word,
     -- | The compiler flags.
-    cpFlags :: String
+    cpFlags :: String,
+    -- | The size of a pointer.
+    cpPtrSize :: Word
   }
 
 -- | A monad class providing access to the compiler parameters.
