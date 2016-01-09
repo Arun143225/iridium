@@ -125,6 +125,32 @@ import qualified Data.ByteString as Strict
 -- compelling reason for it.  Examples would be optimizations that
 -- deal with GC or virtual calls (or eventually transactions).
 
+-- | Data for a structure field.
+data Field tagty =
+  Field {
+    -- | The name of the field
+    fieldName :: !Strict.ByteString,
+    -- | The mutability of the field.
+    fieldMutability :: !Mutability,
+    -- | The type of the field.
+    fieldTy :: Type tagty,
+      -- | The position in source from which this arises.
+    fieldPos :: !DWARFPosition
+  }
+
+-- | Data for a variant.
+data Variant tagty =
+  Variant {
+    -- | The name of the variant.
+    variantName :: !Strict.ByteString,
+    -- | The mutability of the variant data.
+    variantMutability :: !Mutability,
+    -- | The variant type.
+    variantTy :: Type tagty,
+    -- | The position in source from which this arises.
+    variantPos :: !DWARFPosition
+  }
+
 -- | Types.  Types are monomorphic, and correspond roughly with LLVM
 -- types.
 data Type tagty =
@@ -142,16 +168,14 @@ data Type tagty =
       -- | Whether or not the layout is strict.
       structPacked :: !Bool,
       -- | The fields of the struct.
-      structFields :: Array Fieldname (Strict.ByteString,
-                                       Mutability, Type tagty),
+      structFields :: !(Array Fieldname (Field tagty)),
       -- | The position in source from which this arises.
       structPos :: !DWARFPosition
     }
   -- | A variant, representing both tuples and records
   | VariantType {
       -- | The fields of the struct.
-      variantForms :: Array Variantname (Strict.ByteString,
-                                         Mutability, Type tagty),
+      variantForms :: !(Array Variantname (Variant tagty)),
       -- | The position in source from which this arises.
       variantPos :: !DWARFPosition
     }
@@ -197,7 +221,10 @@ data Type tagty =
       idPos :: !DWARFPosition
     }
   -- | The unit type, equivalent to SML unit and C/Java void
-  | UnitType !DWARFPosition
+  | UnitType {
+      -- | The position in source from which this arises.
+      unitPos :: !DWARFPosition
+    }
 
 -- | An expression
 data Exp tagty =
@@ -230,7 +257,7 @@ data Exp tagty =
       -- | The operator.
       unopOp :: !Unop,
       -- | The operand.
-      unopVal ::  Exp tagty,
+      unopVal :: Exp tagty,
       -- | The position in source from which this arises.
       unopPos :: !DWARFPosition
     }
@@ -265,7 +292,7 @@ data Exp tagty =
       -- | The literal's type, must be a struct type.
       structLitTy :: Type tagty,
       -- | The constant's field values
-      structLitFields :: Array Fieldname (Exp tagty),
+      structLitFields :: !(Array Fieldname (Exp tagty)),
       -- | The position in source from which this arises.
       structLitPos :: !DWARFPosition
     }
@@ -341,17 +368,23 @@ data TypeDef tagty =
       -- | The typedef's name.
       typeDefStr :: !Strict.ByteString,
       -- | The type.
-      typeDefTy :: !(Type tagty)
+      typeDefTy :: !(Type tagty),
+      -- | Position of the type definition.
+      typeDefPos :: !DWARFPosition
     }
     -- | A type definition to a name.
   | Name {
       -- | The typedef's name.
-      nameStr :: !Strict.ByteString
+      nameStr :: !Strict.ByteString,
+      -- | Position of the type definition.
+      namePos :: !DWARFPosition
     }
     -- | An anonymous type definition.
   | Anon {
       -- | The type.
-      anonTy :: !(Type tagty)
+      anonTy :: !(Type tagty),
+      -- | Position of the type definition.
+      anonPos :: !DWARFPosition
     }
 
 -- | A module.  Represents a concept similar to an LLVM module.
@@ -366,7 +399,7 @@ data Module tagty tagdescty gr =
       modTags :: !(Array Tagname (TagDesc tagdescty)),
       -- | Generated GC types (this module will generate the signatures
       -- and accessors)
-      modGenTags :: ![Tagname],
+      modGenTags :: [Tagname],
       -- | A map from global names to the corresponding definitions
       modGlobals :: !(Array Globalname (Global tagty gr)),
       -- | The position in source from which this arises.  This is here
