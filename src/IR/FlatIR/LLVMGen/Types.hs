@@ -119,27 +119,34 @@ toLLVMType _ FloatType { floatSize = 80 } = LLVM.x86_fp80
 toLLVMType _ FloatType { floatSize = 128 } = LLVM.fp128
 toLLVMType _ FloatType { floatSize = n } =
   error ("Cannot generate floating point type with " ++ show n ++ " bits")
-toLLVMType _ (UnitType _) = LLVM.StructureType { LLVM.elementTypes = [],
-                                                 LLVM.isPacked = False }
+toLLVMType _ UnitType {} = LLVM.StructureType { LLVM.elementTypes = [],
+                                                LLVM.isPacked = False }
 
 -- | Generate the LLVM type for a given Flat IR type.
-genTypeDefs :: Graph gr =>
+genTypeDefs :: (MonadIO m, MonadDebug m, Graph gr) =>
                Module tagty typedesc gr
             -- ^ The FlatIR module being translated
-            -> [LLVM.Definition]
+            -> m [LLVM.Definition]
             -- ^ The corresponding LLVM type
 genTypeDefs m @ Module { modTypes = types } =
   let
     -- Anonymous definitions get a nameless entry
-    mapfun (tyid, Anon { anonTy = ty }) =
-      LLVM.TypeDefinition (LLVM.UnName $! fromIntegral $! fromEnum tyid)
-                          (Just $! toLLVMType m ty)
+    mapfun (tyid, tydef @ Anon { anonTy = ty }) =
+      do
+        genTypeDefMD tyid tydef
+        return $! LLVM.TypeDefinition (LLVM.UnName $! fromIntegral $!
+                                       fromEnum tyid)
+                                      (Just $! toLLVMType m ty)
     -- Name-only definitions get an empty type definition
-    mapfun (_, Name { nameStr = bstr }) =
-      LLVM.TypeDefinition (LLVM.Name (Strict.toString bstr)) Nothing
+    mapfun (tyid, tydef @ Name { nameStr = bstr }) =
+      do
+        genTypeDefMD tyid tydef
+        return $! LLVM.TypeDefinition (LLVM.Name (Strict.toString bstr)) Nothing
     -- Named definitions get both
-    mapfun (_, TypeDef { typeDefStr = bstr, typeDefTy = ty }) =
-      LLVM.TypeDefinition (LLVM.Name (Strict.toString bstr))
-                          (Just $! toLLVMType m ty)
+    mapfun (tyid, tydef @ TypeDef { typeDefStr = bstr, typeDefTy = ty }) =
+      do
+        genTypeDefMD tyid tydef
+        return $! LLVM.TypeDefinition (LLVM.Name (Strict.toString bstr))
+                                      (Just $! toLLVMType m ty)
   in
-    map mapfun (assocs types)
+    mapM mapfun (assocs types)
