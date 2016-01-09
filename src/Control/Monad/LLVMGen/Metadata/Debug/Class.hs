@@ -34,17 +34,38 @@ module Control.Monad.LLVMGen.Metadata.Debug.Class(
        ) where
 
 import Control.Monad.LLVMGen.Metadata.Class
-import Data.Position.DWARFPosition
+--import Data.Position.DWARFPosition
 import Data.Position.Filename
 import LLVM.General.AST hiding (Type)
+
+--import qualified Data.ByteString as Strict
 
 -- | A class of monads which create and maintain LLVM debug metadata.
 class MonadMetadata m => MonadDebugMetadata m where
   -- | Get a metadata node for a compilation unit.
+  {-
   getCompUnitMD :: FileInfo
-                -- ^ The name of the file.
+                -- ^ The file info for the compilation unit.
+                -> Word
+                -- ^ The DWARF Language ID code.
+                -> Strict.ByteString
+                -- ^ The producer string.
+                -> Strict.ByteString
+                -- ^ The flags passed to the producer.
                 -> m Operand
+-}
+  -- | Create a metadata node for file information.
+  getFileInfoMD :: FileInfo
+                -- ^ The file info for which to create metadata.
+                -> m (Maybe Operand)
   -- | Get a metadata node for a given position.
   getPositionMD :: DWARFPosition
                 -- ^ The position.
                 -> m (Maybe Operand)
+  -- | Generate a metadata node for a typedef.
+  genTypeDefMD :: (MonadIO m, MonadMetadata m, MonadPositions m) =>
+                  Typename
+               -- ^ The typename associated with this typedef.
+               -> TypeDef
+               -- ^ The typedef for which to get a metadata node.
+               -> m ()
