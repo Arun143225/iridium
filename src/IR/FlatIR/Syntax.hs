@@ -334,7 +334,7 @@ data Global tagty gr =
   -- | A function
     Function {
       -- | Name of the function
-      funcName :: !DeclNames,
+      funcName :: !(Maybe DeclNames),
       -- | Return type
       funcRetTy :: Type tagty,
       -- | A map from identifiers for arguments and local variables to
@@ -350,7 +350,7 @@ data Global tagty gr =
   -- | A global variable
   | GlobalVar {
       -- | The name of the variable.
-      gvarName :: !DeclNames,
+      gvarName :: !(Maybe DeclNames),
       -- | The type of the variable.
       gvarTy :: Type tagty,
       -- | The initializer.
@@ -1214,7 +1214,7 @@ functionPickler =
              Function { funcName = fname, funcRetTy = retty,
                         funcValTys = valtys, funcParams = params,
                         funcBody = body, funcPos = pos }, revfunc)
-           (xpElem (gxFromString "Function") xpickle
+           (xpElem (gxFromString "Function") (xpOption xpickle)
                    (xp5Tuple (xpElemNodes (gxFromString "retty") xpickle)
                              (xpElemNodes (gxFromString "valtys") valtysPickler)
                              (xpElemNodes (gxFromString "params")
@@ -1237,7 +1237,7 @@ globalvarPickler =
     xpWrap (\((gname, mut), (ty, init, pos)) ->
              GlobalVar { gvarName = gname, gvarTy = ty, gvarInit = init,
                          gvarMutability = mut, gvarPos = pos }, revfunc)
-           (xpElem (gxFromString "Function") (xpPair xpickle xpickle)
+           (xpElem (gxFromString "Function") (xpPair (xpOption xpickle) xpickle)
                    (xpTriple (xpElemNodes (gxFromString "type") xpickle)
                              (xpOption (xpElemNodes (gxFromString "init")
                                                     xpickle))
