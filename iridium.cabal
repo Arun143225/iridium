@@ -25,11 +25,12 @@ Library
   hs-source-dirs:       src
   exposed-modules:      Control.Monad.CompileParams
                         Control.Monad.CompileParams.Class
+                        Control.Monad.LLVMGen.Globals.Class
+                        Control.Monad.LLVMGen.Globals
                         Control.Monad.LLVMGen.Metadata
                         Control.Monad.LLVMGen.Metadata.Class
                         Control.Monad.LLVMGen.Metadata.Debug
                         Control.Monad.LLVMGen.Metadata.Debug.Class
-                        Control.Monad.LLVMGen.Types.Class
                         IR.Common.Body
                         IR.Common.GC
                         IR.Common.LValue,

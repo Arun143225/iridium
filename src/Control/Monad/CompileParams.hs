@@ -53,6 +53,7 @@ import Control.Monad.Gensym
 import Control.Monad.Journal
 import Control.Monad.Keywords
 import Control.Monad.Loader.Class
+import Control.Monad.LLVMGen.Globals.Class
 import Control.Monad.LLVMGen.Metadata.Class
 import Control.Monad.Messages
 import Control.Monad.SourceFiles
@@ -145,6 +146,10 @@ instance MonadGenpos m => MonadGenpos (CompileParamsT m) where
 instance MonadGensym m => MonadGensym (CompileParamsT m) where
   symbol = lift . symbol
   unique = lift . unique
+
+instance MonadGlobals m => MonadGlobals (CompileParamsT m) where
+  getGlobalVal = lift . getGlobalVal
+  createGlobalID = lift createGlobalID
 
 instance (Monoid w, MonadJournal w m) => MonadJournal w (CompileParamsT m) where
   journal = lift . journal
