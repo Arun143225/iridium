@@ -139,16 +139,16 @@ data FieldDef tagty =
   }
 
 -- | Data for a variant.
-data VariantDef tagty =
-  VariantDef {
+data FormDef tagty =
+  FormDef {
     -- | The name of the variant.
-    variantDefName :: !Strict.ByteString,
+    formDefName :: !Strict.ByteString,
     -- | The mutability of the variant data.
-    variantDefMutability :: !Mutability,
+    formDefMutability :: !Mutability,
     -- | The variant type.
-    variantDefTy :: Type tagty,
+    formDefTy :: Type tagty,
     -- | The position in source from which this arises.
-    variantDefPos :: DWARFPosition Globalname Typename
+    formDefPos :: DWARFPosition Globalname Typename
   }
 
 -- | Types.  Types are monomorphic, and correspond roughly with LLVM
@@ -175,7 +175,7 @@ data Type tagty =
   -- | A variant, representing both tuples and records
   | VariantType {
       -- | The fields of the struct.
-      variantTyForms :: !(Array Formname (VariantDef tagty)),
+      variantTyForms :: !(Array Formname (FormDef tagty)),
       -- | The position in source from which this arises.
       variantTyPos :: DWARFPosition Globalname Typename
     }
@@ -414,11 +414,9 @@ instance Eq tagty => Eq (FieldDef tagty) where
                fieldDefMutability = mut2 } =
       mut1 == mut2 && name1 == name2 && ty1 == ty2
 
-instance Eq tagty => Eq (VariantDef tagty) where
-  VariantDef { variantDefName = name1, variantDefTy = ty1,
-               variantDefMutability = mut1 } ==
-    VariantDef { variantDefName = name2, variantDefTy = ty2,
-                 variantDefMutability = mut2 } =
+instance Eq tagty => Eq (FormDef tagty) where
+  FormDef { formDefName = name1, formDefTy = ty1, formDefMutability = mut1 } ==
+    FormDef { formDefName = name2, formDefTy = ty2, formDefMutability = mut2 } =
       mut1 == mut2 && name1 == name2 && ty1 == ty2
 
 instance Eq tagty => Eq (Type tagty) where
@@ -492,11 +490,11 @@ instance Ord tagty => Ord (FieldDef tagty) where
         out -> out
       out -> out
 
-instance Ord tagty => Ord (VariantDef tagty) where
-  compare VariantDef { variantDefName = name1, variantDefTy = ty1,
-                       variantDefMutability = mut1 }
-          VariantDef { variantDefName = name2, variantDefTy = ty2,
-                       variantDefMutability = mut2 } =
+instance Ord tagty => Ord (FormDef tagty) where
+  compare FormDef { formDefName = name1, formDefTy = ty1,
+                    formDefMutability = mut1 }
+          FormDef { formDefName = name2, formDefTy = ty2,
+                    formDefMutability = mut2 } =
     case compare mut1 mut2 of
       EQ -> case compare name1 name2 of
         EQ -> compare ty1 ty2
@@ -638,9 +636,9 @@ instance Hashable tagty => Hashable (FieldDef tagty) where
                             fieldDefMutability = mut } =
     s `hashWithSalt` mut `hashWithSalt` name `hashWithSalt` ty
 
-instance Hashable tagty => Hashable (VariantDef tagty) where
-  hashWithSalt s VariantDef { variantDefName = name, variantDefTy = ty,
-                              variantDefMutability = mut } =
+instance Hashable tagty => Hashable (FormDef tagty) where
+  hashWithSalt s FormDef { formDefName = name, formDefTy = ty,
+                           formDefMutability = mut } =
     s `hashWithSalt` mut `hashWithSalt` name `hashWithSalt` ty
 
 instance Hashable tagty => Hashable (Type tagty) where
@@ -699,9 +697,9 @@ instance RenameType Typename (FieldDef tagty) where
   renameType f fdef @ FieldDef { fieldDefTy = ty } =
     fdef { fieldDefTy = renameType f ty }
 
-instance RenameType Typename (VariantDef tagty) where
-  renameType f vdef @ VariantDef { variantDefTy = ty } =
-    vdef { variantDefTy = renameType f ty }
+instance RenameType Typename (FormDef tagty) where
+  renameType f vdef @ FormDef { formDefTy = ty } =
+    vdef { formDefTy = renameType f ty }
 
 instance RenameType Typename (Type tagty) where
   renameType f ty @ FuncType { funcTyRetTy = retty, funcTyArgTys = argtys } =
@@ -824,14 +822,14 @@ structTypePickler =
 
 instance (GenericXMLString tag, Show tag, GenericXMLString text, Show text,
           XmlPickler [NodeG [] tag text] typetag) =>
-         XmlPickler [NodeG [] tag text] (Formname, VariantDef typetag) where
+         XmlPickler [NodeG [] tag text] (Formname, FormDef typetag) where
   xpickle =
     xpWrap (\((idx, fname, mut), (ty, pos)) ->
-             (idx, VariantDef { variantDefName = gxToByteString fname,
-                                variantDefMutability = mut, variantDefTy = ty,
-                                variantDefPos = pos }),
-            \(idx, VariantDef { variantDefMutability = mut, variantDefPos = pos,
-                                variantDefName = fname, variantDefTy = ty }) ->
+             (idx, FormDef { formDefName = gxToByteString fname,
+                             formDefMutability = mut, formDefTy = ty,
+                             formDefPos = pos }),
+            \(idx, FormDef { formDefMutability = mut, formDefPos = pos,
+                             formDefName = fname, formDefTy = ty }) ->
               ((idx, gxFromByteString fname, mut), (ty, pos)))
          (xpElem (gxFromString "form")
                  (xpTriple xpickle (xpAttr (gxFromString "name") xpText)
@@ -842,7 +840,7 @@ instance (GenericXMLString tag, Show tag, GenericXMLString text, Show text,
 formsPickler :: (GenericXMLString tag, Show tag,
                  GenericXMLString text, Show text,
                  XmlPickler [NodeG [] tag text] typetag) =>
-                PU [NodeG [] tag text] (Array Formname (VariantDef typetag))
+                PU [NodeG [] tag text] (Array Formname (FormDef typetag))
 formsPickler =
   xpWrap (\l -> array (toEnum 0, toEnum (length l)) l, assocs)
          (xpElemNodes (gxFromString "forms") (xpList xpickle))
