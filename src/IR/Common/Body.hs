@@ -62,14 +62,14 @@ data Stm exp =
   -- | Update the given lvalue
     Move {
       -- | The destination LValue.
-      moveDst :: !(LValue exp),
+      moveDst :: (LValue exp),
       -- | The source expression.
-      moveSrc :: !exp,
+      moveSrc :: exp,
       -- | The position in source from which this originates.
-      movePos :: !DWARFPosition
+      movePos :: DWARFPosition Globalname Typename
     }
   -- | Execute an expression
-  | Do !exp
+  | Do { doExp :: !exp }
 
 -- | A binding.  Represents an SSA binding in the SSA form of the
 -- language.
@@ -81,7 +81,7 @@ data Phi =
     -- | A map from inbound edges to values
     phiVals :: !(Map Label Id),
     -- | The position in source from which this arises.
-    phiPos :: !DWARFPosition
+    phiPos :: DWARFPosition Globalname Typename
   }
 
 -- | A binding.  Represents an SSA binding in the SSA form of the
@@ -91,9 +91,9 @@ data Bind exp =
       -- | The name being bound.
       bindName :: !Id,
       -- | The value beind bound.
-      bindVal :: !exp,
+      bindVal :: exp,
       -- | The position in source from which this originates.
-      bindPos :: !DWARFPosition
+      bindPos :: DWARFPosition Globalname Typename
     }
     -- | Execute an expression for its effect only.  Analogous to Do
     -- in the statement language.
@@ -103,11 +103,11 @@ data Bind exp =
 data Block exp elems =
     Block {
       -- | The statements in the basic block
-      blockBody :: !elems,
+      blockBody :: elems,
       -- | The transfer for the basic block
-      blockXfer :: !(Transfer exp),
+      blockXfer :: Transfer exp,
       -- | The position in source from which this arises.
-      blockPos :: !DWARFPosition
+      blockPos :: DWARFPosition Globalname Typename
     }
 
 -- There is no straightforward ordering, equality, or hashing on Body.
@@ -118,7 +118,7 @@ data Body exp elems gr =
       -- | The entry block
       bodyEntry :: !Label,
       -- | The CFG
-      bodyCFG :: !(gr (Block exp elems) ())
+      bodyCFG :: gr (Block exp elems) ()
     }
 
 type SSAElems exp = ([Phi], [Bind exp])

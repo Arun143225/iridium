@@ -1,4 +1,4 @@
--- Copyright (c) 2015 Eric McCorkle.  All rights reserved.
+-- Copyright (c) 2016 Eric McCorkle.  All rights reserved.
 --
 -- Redistribution and use in source and binary forms, with or without
 -- modification, are permitted provided that the following conditions
@@ -53,29 +53,29 @@ data Transfer exp =
       -- | The jump target.
       gotoLabel :: !Label,
       -- | The position in source from which this arises.
-      gotoPos :: !DWARFPosition
+      gotoPos :: DWARFPosition Globalname Typename
     }
   -- | A (integer) case expression
   | Case {
       -- | The value being decided upon.  Must be an integer value.
-      caseVal :: !exp,
+      caseVal :: exp,
       -- | The cases.  There must be at least one case.
-      caseCases :: ![(Integer, Label)],
+      caseCases :: [(Integer, Label)],
       -- | The default case.
       caseDefault :: !Label,
       -- | The position in source from which this arises.
-      casePos :: !DWARFPosition
+      casePos :: DWARFPosition Globalname Typename
     }
   -- | A return
   | Ret {
       -- | The return value, if one exists.
-      retVal :: !(Maybe exp),
+      retVal :: Maybe exp,
       -- | The position in source from which this arises.
-      retPos :: !DWARFPosition
+      retPos :: DWARFPosition Globalname Typename
     }
   -- | An unreachable instruction, usually following a call with no
   -- return
-  | Unreachable !DWARFPosition
+  | Unreachable { unreachablePos :: DWARFPosition Globalname Typename }
 
 instance Eq1 Transfer where
   Goto { gotoLabel = label1 } ==# Goto { gotoLabel = label2 } = label1 == label2

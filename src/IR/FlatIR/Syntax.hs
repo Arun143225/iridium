@@ -126,29 +126,29 @@ import qualified Data.ByteString as Strict
 -- deal with GC or virtual calls (or eventually transactions).
 
 -- | Data for a structure field.
-data Field tagty =
-  Field {
+data FieldDef tagty =
+  FieldDef {
     -- | The name of the field
-    fieldName :: !Strict.ByteString,
+    fieldDefName :: !Strict.ByteString,
     -- | The mutability of the field.
-    fieldMutability :: !Mutability,
+    fieldDefMutability :: !Mutability,
     -- | The type of the field.
-    fieldTy :: Type tagty,
+    fieldDefTy :: Type tagty,
       -- | The position in source from which this arises.
-    fieldPos :: !DWARFPosition
+    fieldDefPos :: DWARFPosition Globalname Typename
   }
 
 -- | Data for a variant.
-data Variant tagty =
-  Variant {
+data VariantDef tagty =
+  VariantDef {
     -- | The name of the variant.
-    variantName :: !Strict.ByteString,
+    variantDefName :: !Strict.ByteString,
     -- | The mutability of the variant data.
-    variantMutability :: !Mutability,
+    variantDefMutability :: !Mutability,
     -- | The variant type.
-    variantTy :: Type tagty,
+    variantDefTy :: Type tagty,
     -- | The position in source from which this arises.
-    variantPos :: !DWARFPosition
+    variantDefPos :: DWARFPosition Globalname Typename
   }
 
 -- | Types.  Types are monomorphic, and correspond roughly with LLVM
@@ -161,23 +161,23 @@ data Type tagty =
       -- | The types of the arguments.
       funcTyArgTys :: [Type tagty],
       -- | The position in source from which this arises.
-      funcTyPos :: !DWARFPosition
+      funcTyPos :: DWARFPosition Globalname Typename
     }
   -- | A structure, representing both tuples and records
   | StructType {
       -- | Whether or not the layout is strict.
       structPacked :: !Bool,
       -- | The fields of the struct.
-      structFields :: !(Array Fieldname (Field tagty)),
+      structFields :: !(Array Fieldname (FieldDef tagty)),
       -- | The position in source from which this arises.
-      structPos :: !DWARFPosition
+      structPos :: DWARFPosition Globalname Typename
     }
   -- | A variant, representing both tuples and records
   | VariantType {
       -- | The fields of the struct.
-      variantForms :: !(Array Variantname (Variant tagty)),
+      variantTyForms :: !(Array Formname (VariantDef tagty)),
       -- | The position in source from which this arises.
-      variantPos :: !DWARFPosition
+      variantTyPos :: DWARFPosition Globalname Typename
     }
   -- | An array.  Unlike LLVM arrays, these may be variable-sized
   | ArrayType {
@@ -186,14 +186,14 @@ data Type tagty =
       -- | The type of array elements.
       arrayElemTy :: Type tagty,
       -- | The position in source from which this arises.
-      arrayPos :: !DWARFPosition
+      arrayPos :: DWARFPosition Globalname Typename
     }
   -- | Pointers, both native and GC
   | PtrType {
       -- | The pointer information
       ptrTy :: !(Ptr tagty (Type tagty)),
       -- | The position in source from which this arises.
-      ptrPos :: !DWARFPosition
+      ptrPos :: DWARFPosition Globalname Typename
     }
   -- | An integer, possibly signed, with a size.
   | IntType {
@@ -204,26 +204,26 @@ data Type tagty =
       -- | The possible-value intervals for the integer.
       intIntervals :: !(Intervals Integer),
       -- | The position in source from which this arises.
-      intPos :: !DWARFPosition
+      intPos :: DWARFPosition Globalname Typename
     }
   -- | Floating point types
   | FloatType {
       -- | The size of the float in bits.
       floatSize :: !Word,
       -- | The position in source from which this arises.
-      floatPos :: !DWARFPosition
+      floatPos :: DWARFPosition Globalname Typename
     }
   -- | A defined type
   | IdType {
       -- | The name for this type.
       idName :: !Typename,
       -- | The position in source from which this arises.
-      idPos :: !DWARFPosition
+      idPos :: DWARFPosition Globalname Typename
     }
   -- | The unit type, equivalent to SML unit and C/Java void
   | UnitType {
       -- | The position in source from which this arises.
-      unitPos :: !DWARFPosition
+      unitPos :: DWARFPosition Globalname Typename
     }
 
 -- | An expression
@@ -241,7 +241,7 @@ data Exp tagty =
       -- | The right hand side.
       binopRight :: Exp tagty,
       -- | The position in source from which this arises.
-      binopPos :: !DWARFPosition
+      binopPos :: DWARFPosition Globalname Typename
     }
   -- | Call a function.
   | Call {
@@ -250,7 +250,7 @@ data Exp tagty =
       -- | The arguments to the function.
       callArgs :: [Exp tagty],
       -- | The position in source from which this arises.
-      callPos :: !DWARFPosition
+      callPos :: DWARFPosition Globalname Typename
     }
   -- | A unary operation
   | Unop {
@@ -259,7 +259,7 @@ data Exp tagty =
       -- | The operand.
       unopVal :: Exp tagty,
       -- | The position in source from which this arises.
-      unopPos :: !DWARFPosition
+      unopPos :: DWARFPosition Globalname Typename
     }
   -- | A conversion from one type to another.
   | Conv {
@@ -268,7 +268,7 @@ data Exp tagty =
       -- | The value being converted.
       convVal :: Exp tagty,
       -- | The position in source from which this arises.
-      convPos :: !DWARFPosition
+      convPos :: DWARFPosition Globalname Typename
     }
   -- | Treat an expression as if it were the given type regardless of
   -- its actual type.
@@ -278,14 +278,14 @@ data Exp tagty =
       -- | The value being cast.
       castVal :: Exp tagty,
       -- | The position in source from which this arises.
-      castPos :: !DWARFPosition
+      castPos :: DWARFPosition Globalname Typename
     }
   -- | Address of an LValue
   | AddrOf {
       -- | The value having its address taken.
       addrofVal :: LValue (Exp tagty),
       -- | The position in source from which this arises.
-      addrofPos :: !DWARFPosition
+      addrofPos :: DWARFPosition Globalname Typename
     }
   -- | A structure literal
   | StructLit {
@@ -294,18 +294,18 @@ data Exp tagty =
       -- | The constant's field values
       structLitFields :: !(Array Fieldname (Exp tagty)),
       -- | The position in source from which this arises.
-      structLitPos :: !DWARFPosition
+      structLitPos :: DWARFPosition Globalname Typename
     }
   -- | A variant literal
   | VariantLit {
       -- | The literal's type, must be a variant type.
       variantLitTy :: Type tagty,
       -- | The literal's form.
-      variantLitForm :: !Variantname,
+      variantLitForm :: !Formname,
       -- | The literal's inner value.
       variantLitVal :: Exp tagty,
       -- | The position in source from which this arises.
-      variantLitPos :: !DWARFPosition
+      variantLitPos :: DWARFPosition Globalname Typename
     }
   -- | An array literal
   | ArrayLit {
@@ -314,7 +314,7 @@ data Exp tagty =
       -- | The constant's values
       arrayLitVals :: [Exp tagty],
       -- | The position in source from which this arises.
-      arrayLitPos :: !DWARFPosition
+      arrayLitPos :: DWARFPosition Globalname Typename
     }
   -- | A numerical constant with a given size and signedness XXX add a
   -- floating point constant.
@@ -324,7 +324,7 @@ data Exp tagty =
       -- | The constant's value
       intLitVal :: !Integer,
       -- | The position in source from which this arises.
-      intLitPos :: !DWARFPosition
+      intLitPos :: DWARFPosition Globalname Typename
     }
   -- | An LValue
   | LValue !(LValue (Exp tagty))
@@ -345,7 +345,7 @@ data Global tagty gr =
       -- | The function's body, if it has one
       funcBody :: Maybe (Body (Exp tagty) (StmElems (Exp tagty)) gr),
       -- | The position in source from which this arises.
-      funcPos :: !DWARFPosition
+      funcPos :: DWARFPosition Globalname Typename
     }
   -- | A global variable
   | GlobalVar {
@@ -358,7 +358,7 @@ data Global tagty gr =
       -- | The variable's mutability.
       gvarMutability :: !Mutability,
       -- | The position in source from which this arises.
-      gvarPos :: !DWARFPosition
+      gvarPos :: DWARFPosition Globalname Typename
     }
 
 -- | Type definitions.
@@ -370,21 +370,21 @@ data TypeDef tagty =
       -- | The type.
       typeDefTy :: !(Type tagty),
       -- | Position of the type definition.
-      typeDefPos :: !DWARFPosition
+      typeDefPos :: DWARFPosition Globalname Typename
     }
     -- | A type definition to a name.
   | Name {
       -- | The typedef's name.
       nameStr :: !Strict.ByteString,
       -- | Position of the type definition.
-      namePos :: !DWARFPosition
+      namePos :: DWARFPosition Globalname Typename
     }
     -- | An anonymous type definition.
   | Anon {
       -- | The type.
       anonTy :: !(Type tagty),
       -- | Position of the type definition.
-      anonPos :: !DWARFPosition
+      anonPos :: DWARFPosition Globalname Typename
     }
 
 -- | A module.  Represents a concept similar to an LLVM module.
@@ -404,8 +404,22 @@ data Module tagty tagdescty gr =
       modGlobals :: !(Array Globalname (Global tagty gr)),
       -- | The position in source from which this arises.  This is here
       -- solely to record filenames in a unified way.
-      modPos :: !DWARFPosition
+      modPos :: DWARFPosition Globalname Typename
     }
+
+instance Eq tagty => Eq (FieldDef tagty) where
+  FieldDef { fieldDefName = name1, fieldDefTy = ty1,
+             fieldDefMutability = mut1 } ==
+    FieldDef { fieldDefName = name2, fieldDefTy = ty2,
+               fieldDefMutability = mut2 } =
+      mut1 == mut2 && name1 == name2 && ty1 == ty2
+
+instance Eq tagty => Eq (VariantDef tagty) where
+  VariantDef { variantDefName = name1, variantDefTy = ty1,
+               variantDefMutability = mut1 } ==
+    VariantDef { variantDefName = name2, variantDefTy = ty2,
+                 variantDefMutability = mut2 } =
+      mut1 == mut2 && name1 == name2 && ty1 == ty2
 
 instance Eq tagty => Eq (Type tagty) where
   FuncType { funcTyRetTy = retty1, funcTyArgTys = params1 } ==
@@ -414,8 +428,8 @@ instance Eq tagty => Eq (Type tagty) where
   StructType { structPacked = packed1, structFields = fields1 } ==
     StructType { structPacked = packed2, structFields = fields2 } =
     packed1 == packed2 && fields1 == fields2
-  VariantType { variantForms = forms1 } ==
-    VariantType { variantForms = forms2 } =
+  VariantType { variantTyForms = forms1 } ==
+    VariantType { variantTyForms = forms2 } =
     forms1 == forms2
   ArrayType { arrayLen = len1, arrayElemTy = inner1 } ==
     ArrayType { arrayLen = len2, arrayElemTy = inner2 } =
@@ -467,6 +481,28 @@ instance Eq tagty => Eq (Exp tagty) where
   (LValue lval1) == (LValue lval2) = lval1 == lval2
   _ == _ = False
 
+instance Ord tagty => Ord (FieldDef tagty) where
+  compare FieldDef { fieldDefName = name1, fieldDefTy = ty1,
+                     fieldDefMutability = mut1 }
+          FieldDef { fieldDefName = name2, fieldDefTy = ty2,
+                     fieldDefMutability = mut2 } =
+    case compare mut1 mut2 of
+      EQ -> case compare name1 name2 of
+        EQ -> compare ty1 ty2
+        out -> out
+      out -> out
+
+instance Ord tagty => Ord (VariantDef tagty) where
+  compare VariantDef { variantDefName = name1, variantDefTy = ty1,
+                       variantDefMutability = mut1 }
+          VariantDef { variantDefName = name2, variantDefTy = ty2,
+                       variantDefMutability = mut2 } =
+    case compare mut1 mut2 of
+      EQ -> case compare name1 name2 of
+        EQ -> compare ty1 ty2
+        out -> out
+      out -> out
+
 instance Ord tagty => Ord (Type tagty) where
   compare FuncType { funcTyRetTy = retty1, funcTyArgTys = params1 }
           FuncType { funcTyRetTy = retty2, funcTyArgTys = params2 } =
@@ -482,8 +518,8 @@ instance Ord tagty => Ord (Type tagty) where
       out -> out
   compare StructType {} _ = LT
   compare _ StructType {} = GT
-  compare VariantType { variantForms = forms1 }
-          VariantType { variantForms = forms2 } =
+  compare VariantType { variantTyForms = forms1 }
+          VariantType { variantTyForms = forms2 } =
     compare forms1 forms2
   compare VariantType {} _ = LT
   compare _ VariantType {} = GT
@@ -597,13 +633,23 @@ instance Ord tagty => Ord (Exp tagty) where
   compare _ IntLit {} = GT
   compare (LValue lval1) (LValue lval2) = compare lval1 lval2
 
+instance Hashable tagty => Hashable (FieldDef tagty) where
+  hashWithSalt s FieldDef { fieldDefName = name, fieldDefTy = ty,
+                            fieldDefMutability = mut } =
+    s `hashWithSalt` mut `hashWithSalt` name `hashWithSalt` ty
+
+instance Hashable tagty => Hashable (VariantDef tagty) where
+  hashWithSalt s VariantDef { variantDefName = name, variantDefTy = ty,
+                              variantDefMutability = mut } =
+    s `hashWithSalt` mut `hashWithSalt` name `hashWithSalt` ty
+
 instance Hashable tagty => Hashable (Type tagty) where
   hashWithSalt s FuncType { funcTyRetTy = retty, funcTyArgTys = params } =
     s `hashWithSalt` (0 :: Int) `hashWithSalt` retty `hashWithSalt` params
   hashWithSalt s StructType { structPacked = packed, structFields = fields } =
     s `hashWithSalt` (1 :: Int) `hashWithSalt`
       packed `hashWithSalt` elems fields
-  hashWithSalt s VariantType { variantForms = forms } =
+  hashWithSalt s VariantType { variantTyForms = forms } =
     s `hashWithSalt` (2 :: Int) `hashWithSalt` elems forms
   hashWithSalt s ArrayType { arrayLen = Nothing, arrayElemTy = inner } =
     s `hashWithSalt` (3 :: Int) `hashWithSalt` (0 :: Int) `hashWithSalt` inner
@@ -649,13 +695,21 @@ instance Hashable tagty => Hashable (Exp tagty) where
     s `hashWithSalt` (11 :: Int) `hashWithSalt` lval
   hashWithSalt _ (GCAlloc {}) = error "GCAlloc is going away"
 
+instance RenameType Typename (FieldDef tagty) where
+  renameType f fdef @ FieldDef { fieldDefTy = ty } =
+    fdef { fieldDefTy = renameType f ty }
+
+instance RenameType Typename (VariantDef tagty) where
+  renameType f vdef @ VariantDef { variantDefTy = ty } =
+    vdef { variantDefTy = renameType f ty }
+
 instance RenameType Typename (Type tagty) where
   renameType f ty @ FuncType { funcTyRetTy = retty, funcTyArgTys = argtys } =
     ty { funcTyArgTys = renameType f argtys, funcTyRetTy = renameType f retty }
   renameType f ty @ StructType { structFields = fields } =
-    ty { structFields = fmap (\(n, m, t) -> (n, m, renameType f t)) fields }
-  renameType f ty @ VariantType { variantForms = forms } =
-    ty { variantForms = fmap (\(n, m, t) -> (n, m, renameType f t)) forms }
+    ty { structFields = fmap (renameType f) fields }
+  renameType f ty @ VariantType { variantTyForms = forms } =
+    ty { variantTyForms = fmap (renameType f) forms }
   renameType f ty @ ArrayType { arrayElemTy = elemty } =
     ty { arrayElemTy = renameType f elemty }
 --  renameType f ty @ PtrType { ptrTy = inner } =
@@ -724,29 +778,30 @@ funcTypePickler =
                                   (xpElemNodes (gxFromString "ret") xpickle)
                                   (xpElemNodes (gxFromString "pos") xpickle)))
 
-fieldPickler :: (GenericXMLString tag, Show tag,
-                 GenericXMLString text, Show text,
-                 XmlPickler [NodeG [] tag text] typetag) =>
-                PU [NodeG [] tag text]
-                   (Fieldname, (Strict.ByteString,
-                                Mutability, Type typetag))
-fieldPickler =
-  xpWrap (\((idx, fname, mut), ty) -> (idx, (gxToByteString fname, mut, ty)),
-          \(idx, (fname, mut, ty)) -> ((idx, gxFromByteString fname, mut), ty))
+instance (GenericXMLString tag, Show tag, GenericXMLString text, Show text,
+          XmlPickler [NodeG [] tag text] typetag) =>
+         XmlPickler [NodeG [] tag text] (Fieldname, FieldDef typetag) where
+  xpickle =
+    xpWrap (\((idx, fname, mut), (ty, pos)) ->
+             (idx, FieldDef { fieldDefName = gxToByteString fname,
+                              fieldDefMutability = mut, fieldDefTy = ty,
+                              fieldDefPos = pos }),
+            \(idx, FieldDef { fieldDefName = fname, fieldDefMutability = mut,
+                              fieldDefTy = ty, fieldDefPos = pos }) ->
+              ((idx, gxFromByteString fname, mut), (ty, pos)))
          (xpElem (gxFromString "field")
                  (xpTriple xpickle (xpAttr (gxFromString "name") xpText)
                            xpickle)
-                 xpickle)
+                 (xpPair (xpElemNodes (gxFromString "type") xpickle)
+                         (xpElemNodes (gxFromString "pos") xpickle)))
 
 fieldsPickler :: (GenericXMLString tag, Show tag,
                   GenericXMLString text, Show text,
                   XmlPickler [NodeG [] tag text] typetag) =>
-                 PU [NodeG [] tag text]
-                    (Array Fieldname (Strict.ByteString,
-                                      Mutability, Type typetag))
+                 PU [NodeG [] tag text] (Array Fieldname (FieldDef typetag))
 fieldsPickler =
   xpWrap (\l -> array (toEnum 0, toEnum (length l)) l, assocs)
-         (xpElemNodes (gxFromString "fields") (xpList fieldPickler))
+         (xpElemNodes (gxFromString "fields") (xpList xpickle))
 
 structTypePickler :: (GenericXMLString tag, Show tag,
                       GenericXMLString text, Show text,
@@ -767,29 +822,30 @@ structTypePickler =
                    (xpPair (xpElemNodes (gxFromString "fields") fieldsPickler)
                            (xpElemNodes (gxFromString "pos") xpickle)))
 
-formPickler :: (GenericXMLString tag, Show tag,
-                GenericXMLString text, Show text,
-                XmlPickler [NodeG [] tag text] typetag) =>
-                PU [NodeG [] tag text]
-                   (Variantname, (Strict.ByteString,
-                                  Mutability, Type typetag))
-formPickler =
-  xpWrap (\((idx, fname, mut), ty) -> (idx, (gxToByteString fname, mut, ty)),
-          \(idx, (fname, mut, ty)) -> ((idx, gxFromByteString fname, mut), ty))
+instance (GenericXMLString tag, Show tag, GenericXMLString text, Show text,
+          XmlPickler [NodeG [] tag text] typetag) =>
+         XmlPickler [NodeG [] tag text] (Formname, VariantDef typetag) where
+  xpickle =
+    xpWrap (\((idx, fname, mut), (ty, pos)) ->
+             (idx, VariantDef { variantDefName = gxToByteString fname,
+                                variantDefMutability = mut, variantDefTy = ty,
+                                variantDefPos = pos }),
+            \(idx, VariantDef { variantDefMutability = mut, variantDefPos = pos,
+                                variantDefName = fname, variantDefTy = ty }) ->
+              ((idx, gxFromByteString fname, mut), (ty, pos)))
          (xpElem (gxFromString "form")
                  (xpTriple xpickle (xpAttr (gxFromString "name") xpText)
                            xpickle)
-                 xpickle)
+                 (xpPair (xpElemNodes (gxFromString "type") xpickle)
+                         (xpElemNodes (gxFromString "pos") xpickle)))
 
 formsPickler :: (GenericXMLString tag, Show tag,
                  GenericXMLString text, Show text,
                  XmlPickler [NodeG [] tag text] typetag) =>
-                 PU [NodeG [] tag text]
-                    (Array Variantname (Strict.ByteString,
-                                        Mutability, Type typetag))
+                PU [NodeG [] tag text] (Array Formname (VariantDef typetag))
 formsPickler =
   xpWrap (\l -> array (toEnum 0, toEnum (length l)) l, assocs)
-         (xpElemNodes (gxFromString "forms") (xpList formPickler))
+         (xpElemNodes (gxFromString "forms") (xpList xpickle))
 
 variantTypePickler :: (GenericXMLString tag, Show tag,
                        GenericXMLString text, Show text,
@@ -797,12 +853,12 @@ variantTypePickler :: (GenericXMLString tag, Show tag,
                       PU [NodeG [] tag text] (Type typetag)
 variantTypePickler =
   let
-    revfunc VariantType { variantForms = forms, variantPos = pos } =
+    revfunc VariantType { variantTyForms = forms, variantTyPos = pos } =
       (forms, pos)
     revfunc _ = error "Can't convert to VariantType"
   in
-    xpWrap (\(forms, pos) -> VariantType { variantForms = forms,
-                                           variantPos = pos },
+    xpWrap (\(forms, pos) -> VariantType { variantTyForms = forms,
+                                           variantTyPos = pos },
             revfunc)
            (xpElemNodes (gxFromString "VariantType")
                         (xpPair (xpElemNodes (gxFromString "forms")

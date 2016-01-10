@@ -58,7 +58,7 @@ data Ptr
       -- | The name of the tag descriptor.
       taggedTag :: !Tagname,
       -- | The tag header metadata.
-      taggedData :: !tagdata
+      taggedData :: tagdata
     }
   -- | An object in non-tagged space
   | Native {
@@ -77,7 +77,7 @@ data TagDesc tagdata =
     -- | Name of the underlying type described by this descriptor.
     tagDescTy :: !Typename,
     -- | Extra metadata contained in this descriptor.
-    tagDescData :: !tagdata
+    tagDescData :: tagdata
   }
 
 -- | Mutability of fields and objects.  Mutability, and particular

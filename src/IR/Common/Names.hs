@@ -35,7 +35,7 @@ module IR.Common.Names(
        Label,
        Id,
        Fieldname,
-       Variantname,
+       Formname,
        Typename,
        Globalname,
        Tagname,
@@ -78,7 +78,7 @@ newtype Fieldname = Fieldname { fieldnameId :: Word }
   deriving (Ord, Eq, Ix)
 
 -- | A variant name, indexes fields
-newtype Variantname = Variantname { variantnameId :: Word }
+newtype Formname = Formname { variantnameId :: Word }
   deriving (Ord, Eq, Ix)
 
 -- | A type name, indexes types
@@ -105,8 +105,8 @@ instance Hashable Globalname where
 instance Hashable Fieldname where
   hashWithSalt s (Fieldname name) = s `hashWithSalt` name
 
-instance Hashable Variantname where
-  hashWithSalt s (Variantname name) = s `hashWithSalt` name
+instance Hashable Formname where
+  hashWithSalt s (Formname name) = s `hashWithSalt` name
 
 instance Hashable Typename where
   hashWithSalt s (Typename n) = s `hashWithSalt` n
@@ -123,8 +123,8 @@ instance Format Label where
 instance Format Fieldname where
   format (Fieldname f) = string "f" <> format f
 
-instance Format Variantname where
-  format (Variantname v) = string "v" <> format v
+instance Format Formname where
+  format (Formname v) = string "v" <> format v
 
 instance Format Id where
   format (Id v) = string "%" <> format v
@@ -150,8 +150,8 @@ instance Enum Fieldname where
   toEnum = Fieldname . toEnum
   fromEnum = fromEnum . fieldnameId
 
-instance Enum Variantname where
-  toEnum = Variantname . toEnum
+instance Enum Formname where
+  toEnum = Formname . toEnum
   fromEnum = fromEnum . variantnameId
 
 instance Enum Globalname where
@@ -215,14 +215,14 @@ instance (GenericXMLString tag, Show tag, GenericXMLString text, Show text) =>
                    (xpAttr (gxFromString "fieldname") xpPrim)
 
 instance (GenericXMLString tag, Show tag, GenericXMLString text, Show text) =>
-         XmlPickler [NodeG [] tag text] Variantname where
-  xpickle = xpWrap (Variantname, variantnameId)
-                   (xpElemNodes (gxFromString "Variantname")
+         XmlPickler [NodeG [] tag text] Formname where
+  xpickle = xpWrap (Formname, variantnameId)
+                   (xpElemNodes (gxFromString "Formname")
                                 (xpContent xpPrim))
 
 instance (GenericXMLString tag, Show tag, GenericXMLString text, Show text) =>
-         XmlPickler (Attributes tag text) Variantname where
-  xpickle = xpWrap (Variantname, variantnameId)
+         XmlPickler (Attributes tag text) Formname where
+  xpickle = xpWrap (Formname, variantnameId)
                    (xpAttr (gxFromString "variantname") xpPrim)
 
 instance (GenericXMLString tag, Show tag, GenericXMLString text, Show text) =>

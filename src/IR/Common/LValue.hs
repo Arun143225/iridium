@@ -1,4 +1,4 @@
--- Copyright (c) 2015 Eric McCorkle.  All rights reserved.
+-- Copyright (c) 2016 Eric McCorkle.  All rights reserved.
 --
 -- Redistribution and use in source and binary forms, with or without
 -- modification, are permitted provided that the following conditions
@@ -54,7 +54,7 @@ data LValue exp =
       -- | The index value.  Must be an integer type.
       idxIndex :: exp,
       -- | The position in source from which this arises.
-      idxPos :: !DWARFPosition
+      idxPos :: DWARFPosition Globalname Typename
     }
   -- | A field in a structure
   | Field {
@@ -64,7 +64,7 @@ data LValue exp =
       -- | The name of the field being accessed.
       fieldName :: !Fieldname,
       -- | The position in source from which this arises.
-      fieldPos :: !DWARFPosition
+      fieldPos :: DWARFPosition Globalname Typename
     }
   -- | A form of a variant
   | Form {
@@ -72,30 +72,30 @@ data LValue exp =
       -- structure type.
       formVal :: exp,
       -- | The name of the field being accessed.
-      formName :: !Variantname,
+      formName :: !Formname,
       -- | The position in source from which this arises.
-      formPos :: !DWARFPosition
+      formPos :: DWARFPosition Globalname Typename
     }
   -- | Dereference a pointer
   | Deref {
       -- | The value being dereferenced.  Must be a pointer type.
       derefVal :: exp,
       -- | The position in source from which this arises.
-      derefPos :: !DWARFPosition
+      derefPos :: DWARFPosition Globalname Typename
     }
   -- | A local value (local variable or argument)
   | Var {
       -- | The name of the local value.
       varName :: !Id,
       -- | The position in source from which this arises.
-      varPos :: !DWARFPosition
+      varPos :: DWARFPosition Globalname Typename
     }
   -- | A global value (global variable or function)
   | Global {
       -- | The name of the global value.
       globalName :: !Globalname,
       -- | The position in source from which this arises.
-      globalPos :: !DWARFPosition
+      globalPos :: DWARFPosition Globalname Typename
     }
 
 instance Eq1 LValue where
