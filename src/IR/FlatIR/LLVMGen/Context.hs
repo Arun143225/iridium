@@ -121,25 +121,6 @@ createTypeDebugMD ty mdcontent =
     liftIO $! HashTable.insert tab ty (MetadataNodeID idx)
     return $! MetadataNodeID idx
 
-getFileInfoMD :: FileInfo
-              -> LLVMGen Operand
-getFileInfoMD finfo @ FileInfo { fileInfoName = fname, fileInfoDir = dir } =
-  do
-    ctx @ Context { ctxFileDebugMD = tab } <- get
-    res <- liftIO $! HashTable.lookup tab finfo
-    case res of
-      Just out -> return out
-      Nothing ->
-        let
-          mdcontent = [Just $! Int { integerBits = 32,
-                                     integerValue = 0xc0029 }, -- DW_TAG_file_type
-                       Just $! MetadataStringOperand $! Strict.toString fname,
-                       Just $! MetadataStringOperand $! Strict.toString dir,
-                       Nothing]
-        in do
-          idx <- createMetadataNode mdcontent
-          liftIO $! HashTable.insert tab finfo (MetadataNodeID idx)
-          return $! MetadataNodeID idx
 
 getCompUnitMD :: FileInfo
               -> LLVMGen Operand
@@ -158,7 +139,8 @@ getCompUnitMD finfo @ FileInfo { fileInfoName = fname, fileInfoDir = dir } =
           globalsMD <- getMetadataID
           idx <- createMetadataNode
                    [Just $! Int { integerBits = 32,
-                                  integerValue = 0xc0011 }, -- DW_TAG_file_type
+                                  -- DW_TAG_file_type
+                                  integerValue = 0xc0011 },
                     Just $! Int { integerBits = 32,
                                   integerValue = 0 },
                     Just $! Int { integerBits = 32,

@@ -45,7 +45,7 @@ import Control.Monad.CommentBuffer
 import Control.Monad.Comments
 import Control.Monad.LLVMGen.Metadata.Class
 import Control.Monad.Cont
-import Control.Monad.Error
+import Control.Monad.Except
 import Control.Monad.Genpos
 import Control.Monad.Gensym
 import Control.Monad.Keywords
@@ -55,7 +55,6 @@ import Control.Monad.SourceFiles
 import Control.Monad.SourceBuffer
 import Control.Monad.State
 import Control.Monad.Symbols
-import Data.Word
 import LLVM.General.AST hiding (Type)
 
 data Context =
@@ -146,7 +145,7 @@ instance MonadCont m => MonadCont (MetadataT m) where
   callCC f =
     MetadataT (callCC (\c -> unpackMetadataT (f (MetadataT . c))))
 
-instance (Error e, MonadError e m) => MonadError e (MetadataT m) where
+instance (MonadError e m) => MonadError e (MetadataT m) where
   throwError = lift . throwError
   m `catchError` h =
     MetadataT (unpackMetadataT m `catchError` (unpackMetadataT . h))

@@ -58,6 +58,7 @@ import Control.Monad.SourceBuffer
 import Control.Monad.Reader
 import Control.Monad.State
 import Control.Monad.Symbols
+import Data.Array.Unboxed
 import Data.HashTable.IO(BasicHashTable)
 import Data.Intervals
 import Data.Position.DWARFPosition
@@ -71,17 +72,23 @@ import qualified Data.Position.Point as Point
 
 data Context =
   Context {
-    -- | Map from FileInfos to metadatas representing DWARF file objects.
+    -- | Map from 'FileInfo's to metadatas representing DWARF file objects.
     ctxFileDebugMD :: !(BasicHashTable FileInfo Operand),
-    -- | Map from FileInfos to metadata ID's for compilation units.
+    -- | Map from 'FileInfo's to metadata ID's for compilation units.
     -- Note that the actual compilation units are assembled at the
     -- end.
     ctxCompUnitMD :: !(BasicHashTable FileInfo Word),
     -- | Map from position info to metadatas representing DWARF
     -- position objects.
     ctxPosDebugMD :: !(BasicHashTable Point.PointInfo Operand),
-    -- | Map from Type's to metadatas representing DWARF type descriptors
-    ctxTypeDebugMD :: !(BasicHashTable Type Operand)
+    -- | Map from 'Type's to metadatas representing DWARF type descriptors.
+    ctxTypeDebugMD :: !(BasicHashTable Type Operand),
+    -- | Map from block positions to medatadas representing the blocks.
+    ctxBlockMD :: !(BasicHashTable SimplePosition Operand),
+    -- | Array mapping 'Globalname's to metadata ID's.
+    ctxGlobalIDs :: !(UArray Word Word),
+    -- | Array mapping 'Typename's to metadata ID's.
+    ctxTypeDefIDs :: !(UArray Word Word)
   }
 
 newtype DebugMetadataT m a =
@@ -89,21 +96,53 @@ newtype DebugMetadataT m a =
 
 type DebugMetadata = DebugMetadataT IO
 
-runDebugMetadataT :: MonadIO m =>
+-- | Generate global metadata IDs.  These are not defined yet.
+genGlobalIDs :: (MonadIO m, MonadMetadata m) =>
+                Module tagty tagdescty gr ->
+                m (UArray Word Word)
+genGlobalIDs Module { modGlobals = globals } =
+  let
+    (lo, hi) = bounds globals
+    loword = toEnum lo
+    hiword = toEnum hi
+    num = hiword - loword
+  in do
+    mds <- replicateM num getMetadataID
+    return array (loword, hiword) mds
+
+-- | Generate typedef metadata IDs.  These are not defined yet.
+genTypeDefIDs :: (MonadIO m, MonadMetadata m) =>
+                Module tagty tagdescty gr ->
+                m (UArray Word Word)
+genTypeDefIDs Module { modTypes = types } =
+  let
+    (lo, hi) = bounds types
+    loword = toEnum lo
+    hiword = toEnum hi
+    num = hiword - loword
+  in do
+    mds <- replicateM num getMetadataID
+    return array (loword, hiword) mds
+
+runDebugMetadataT :: (MonadIO m, MonadMetadata m) =>
                      DebugMetadataT m a
                   -- ^ The @DebugMetadataT@ monad transformer to execute.
+                  -> Module tagty tagdescty gr
                   -> m a
-runDebugMetadataT c =
+runDebugMetadataT c mod =
   do
     fileTab <- liftIO HashTable.new
     compUnitTab <- liftIO HashTable.new
     posTab <- liftIO HashTable.new
     typeTab <- liftIO HashTable.new
+    blockTab <- liftIO HashTable.new
+    globalArr <- genGlobalIDs mod
+    typedefArr <- genTypeDefIDs mod
     runReaderT (unpackDebugMetadataT c)
-               Context { ctxFileDebugMD = fileTab,
-                         ctxCompUnitMD = compUnitTab,
-                         ctxPosDebugMD = posTab,
-                         ctxTypeDebugMD = typeTab }
+               Context { ctxFileDebugMD = fileTab, ctxCompUnitMD = compUnitTab,
+                         ctxPosDebugMD = posTab, ctxTypeDebugMD = typeTab,
+                         ctxBlockMD = blockTab, ctxGlobalMD = globalArr,
+                         ctxTypeDefIDs = typedefArr }
 
 runDebugMetadata :: DebugMetadata a
                  -- ^ The @DebugMetadata@ monad to execute.
@@ -221,7 +260,7 @@ getSimplePositionMD pos =
                            Just filemd,
                            Nothing]
             in do
-              idx <- lift $! createMetadataNode $! mdcontent
+              idx <- lift $! createMetadataNode mdcontent
               return $! MetadataNodeOperand $!
                         MetadataNodeReference $!
                         MetadataNodeID idx
@@ -232,21 +271,92 @@ getSimplePositionMD pos =
           liftIO $! HashTable.insert tab key idx
           return idx
 
-getPositionMD' :: (MonadIO m, MonadMetadata m, MonadPositions m) =>
-                  DWARFPosition
-               -> ReaderT Context m (Maybe Operand)
-getPositionMD' Enclosed { enclosedKind = firstkind, enclosedPos = pos,
-                          enclosedCtx = ctx } =
+startPoint :: DWARFPosition funcid Typename -> Maybe Position.Point
+startPoint Func { funcPos = Point { pointPos = point } } = Just point
+startPoint Func { funcPos = Span { spanStart = point } } = Just point
+startPoint TypeDef { typeDefPos = Point { pointPos = point } } = Just point
+startPoint TypeDef { typeDefPos = Span { spanStart = point } } = Just point
+startPoint Block { blockPos = Point { pointPos = point } } = Just point
+startPoint Block { blockPos = Span { spanStart = point } } = Just point
+startPoint Simple { simplePos = Point { pointPos = point } } = Just point
+startPoint Simple { simplePos = Span { spanStart = point } } = Just point
+startPoint _ = Nothing
+
+getContextMD' :: (MonadIO m, MonadMetadata m, MonadPositions m) =>
+                 Module -> DWARFPosition Globalname Typename ->
+                 ReaderT Context m (Maybe Operand)
+-- For a Def, look up the global's metadata.  It should have already
+-- been generated.
+getContextMD' _ Def { defId = globalname } =
+  do
+    Context { ctxGlobalIDs = globalids } <- ask
+    return $! MetadataNodeOperand $! MetadataNodeReference $!
+              MetadataNodeID $! globalids ! (toEnum globalname)
+-- For a TypeDef, look up the typedef medatada ID.  It should have
+-- already been generated.
+getContextMD' _ TypeDef { typeDefId = tyname } =
+  do
+    Context { ctxTypeDefIDs = typedefids } <- ask
+    return $! MetadataNodeOperand $! MetadataNodeReference $!
+              MetadataNodeID $! typedefids ! (toEnum tyname)
+-- For a block, we'll need to generate the block ourselves.
+getContextMD' mod Block { blockCtx = ctx } =
+  case startPoint ctx of
+    -- Technically this shouldn't happen, but handle it anyway.
+    Nothing -> return Nothing
+    -- Get the start point and generate the block info.
+    Just startpoint ->
+      do
+        Point.PointInfo { pointLine = line, pointColumn = col,
+                          pointFile = fname } <- pointInfo startpoint
+        Context { ctxBlockMD = tab } <- ask
+        res <- liftIO $! HashTable.lookup tab pos
+        case res of
+          -- Create the block metadata if it doesn't exist
+          Nothing ->
+            let
+              createMD ctxmd filemd =
+                let
+                  mdcontent =
+                    [Just $! ConstantOperand $! Int { integerBits = 32,
+                                                      -- DW_TAG_lexical_block
+                                                      integerValue = 0xc000b },
+                     filemd,
+                     ctxmd,
+                     Just $! ConstantOperand $! Int { integerBits = 32,
+                                                      integerValue = line },
+                     Just $! ConstantOperand $! Int { integerBits = 32,
+                                                      integerValue = col },
+                     Nothing]
+                in do
+                  idx <- lift $! createMetadataNode mdcontent
+                  return $! MetadataNodeOperand $!
+                            MetadataNodeReference $!
+                            MetadataNodeID idx
+            in do
+              ctxmd <- getContextMD' mod ctx
+              fileinfo <- fileInfo fname
+              filemd <- getFileInfoMD' fileinfo
+              md <- createMD ctxmd
+              liftIO $! HashTable.insert tab key idx
+              return md
+          -- Otherwise just return it
+          out -> return out
+-- The context for a simple position is its compile unit descriptor.
+getContextMD' mod Simple { simplePos = pos } =
   let
-    getEnclosingMD kind
+    startpoint = case ctx of
+      Point { pointPos = point } -> point
+      Span { spanStart = point } -> point
+  in do
+    Point.PointInfo { pointFile = fname } <- pointInfo startpoint
+    getCompUnitMD' mod fname
+-- Other positions have no context.
+getPositionMD' _ Synthetic {} = return Nothing
+getPositionMD' _ File {} = return Nothing
+getPositionMD' _ CmdLine = return Nothing
 
-getPositionMD' Simple { simplePos = simplepos } =
-  getSimplePositionMD simplepos >>= return . Just
-getPositionMD' Synthetic {} = return Nothing
-getPositionMD' File {} = error "Should not convert file position to metadata!"
-getPositionMD' CmdLine =
-  error "Should not convert command line position to metadata!"
-
+-- XXX Use the typedef ID array here
 createTypeDefMD :: (MonadIO m, MonadMetadata m, MonadPositions m) =>
                    FileInfo -> Integer -> String -> Maybe Operand ->
                    ReaderT Context m Operand
@@ -289,7 +399,7 @@ genTypeDefMD' tyname Name { nameStr = str, namePos = pos } =
     Context { ctxTypeDebugMD = tab } <- ask
     typedefmd <- createTypeDefMD _ (Strict.toString str) Nothing
     liftIO $! HashTable.insert tab typedefty typedefmd
-getTypeDefMD' tyname TypeDef { typeDefStr = str, typeDefTy = ty,
+genTypeDefMD' tyname TypeDef { typeDefStr = str, typeDefTy = ty,
                                typeDefPos = pos } =
   let
     typedefty = Id { idType = tyname, idPos = pos }
@@ -418,7 +528,7 @@ createTypeMD ty @ Variant { variantForms = variants, variantPos = pos } =
       let
         enumvalmd =
           [Just $! ConstantOperand $! Int { integerBits = 32,
-                                            -- DW_TAG_array_type
+                                            -- DW_TAG_enumerator
                                             integerValue = 0xc0028 },
            Just $! MetadataStringOperand (toString bstr),
            Just $! ConstantOperand $! Int { integerBits = 64,
@@ -449,6 +559,7 @@ createTypeMD ty @ Variant { variantForms = variants, variantPos = pos } =
     enummd enumvals =
       [Just $! ConstantOperand $! Int { integerBits = 32,
                                         -- DW_TAG_enum_type
+                                        -- XXX get the right value
                                         integerValue = 0xc0004 },
        Nothing,
        Nothing,
@@ -500,8 +611,8 @@ createTypeMD ty @ Variant { variantForms = variants, variantPos = pos } =
 
     mdcontent size align fields =
       [Just $! ConstantOperand $! Int { integerBits = 32,
-                                        -- DW_TAG_struct_type
-                                        integerValue = 0xc0013 },
+                                        -- DW_TAG_union_type
+                                        integerValue = 0xc0017 },
        Nothing,
        Nothing,
        Just $! MetadataStringOperand "",
@@ -683,7 +794,7 @@ createTypeMD ty @ IntType { intSigned = True, intSize = size } =
     typemd <- lift $! createMetadataNode mdcontent
     liftIO $! HashTable.insert tab ty typemd
     return (MetadataNodeOperand $! MetadataNodeReference $!
-            MetadataNodeIDtypemd typemd, toInteger size, toInteger size)
+            MetadataNodeID typemd, toInteger size, toInteger size)
 createTypeMD ty @ FloatType { floatSize = size } =
   let
     namestr = case size of
@@ -714,7 +825,13 @@ createTypeMD ty @ FloatType { floatSize = size } =
     typemd <- lift $! createMetadataNode mdcontent
     liftIO $! HashTable.insert tab ty typemd
     return (MetadataNodeOperand $! MetadataNodeReference $!
-            MetadataNodeIDtypemd typemd, toInteger size, toInteger size)
+            MetadataNodeID typemd, toInteger size, toInteger size)
+createTypeMD ty @ IdType { idName = tyname } =
+  do
+    Context { ctxTypeDefIDs = typedefids } <- ask
+    return (MetadataNodeOperand $! MetadataNodeReference $!
+            MetadataNodeID $! typedefids ! tyname,
+            _, _)
 createTypeMD ty @ UnitType {} =
   let
     mdcontent =
@@ -739,7 +856,7 @@ createTypeMD ty @ UnitType {} =
     typemd <- lift $! createTypeDefMD mdcontent
     liftIO $! HashTable.insert tab ty typemd
     return (MetadataNodeOperand $! MetadataNodeReference $!
-            MetadataNodeIDtypemd typemd, 0, 0)
+            MetadataNodeID typemd, 0, 0)
 
 instance Monad m => Applicative (DebugMetadataT m) where
   pure = return
