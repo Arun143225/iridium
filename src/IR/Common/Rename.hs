@@ -1,4 +1,4 @@
--- Copyright (c) 2015 Eric McCorkle.  All rights reserved.
+-- Copyright (c) 2017 Eric McCorkle.  All rights reserved.
 --
 -- Redistribution and use in source and binary forms, with or without
 -- modification, are permitted provided that the following conditions
@@ -30,7 +30,7 @@
 {-# OPTIONS_GHC -Wall -Werror #-}
 
 module IR.Common.Rename(
-       Rename(..)
+       module IR.Common.Rename.Class
        ) where
 
 import IR.Common.Rename.Class
