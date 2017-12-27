@@ -1,4 +1,4 @@
--- Copyright (c) 2016 Eric McCorkle.  All rights reserved.
+-- Copyright (c) 2017 Eric McCorkle.  All rights reserved.
 --
 -- Redistribution and use in source and binary forms, with or without
 -- modification, are permitted provided that the following conditions
@@ -61,6 +61,7 @@ module IR.FlatIR.Syntax(
        -- ** Types
        Type(..),
        TypeDef(..),
+       FieldDef(..),
        FormDef(..),
        Ptr(..),
        Mutability(..),
@@ -91,6 +92,7 @@ import Data.Maybe
 import Data.Intervals(Intervals)
 import Data.Position.DWARFPosition(DWARFPosition)
 import Data.Word
+import IR.Common.Alloc
 import IR.Common.Body
 import IR.Common.LValue
 import IR.Common.Names
@@ -229,11 +231,14 @@ data Type tagty =
 
 -- | An expression
 data Exp tagty =
-  -- | Allocate an object whose type is described by the given header.
-  -- XXX probably replace this with a general Alloc instruction,
-  -- represeting GC allocation, malloc, and alloca.
-    GCAlloc !Tagname (Maybe (Exp tagty)) (Maybe (Exp tagty))
-  -- | A binary operation
+    -- | Allocate an object.
+    Alloc {
+      -- | The allocation data.
+      allocData :: !(Allocation tagty (Type tagty) (Exp tagty)),
+      -- | The position in source from which this arises.
+      allocPos :: DWARFPosition Globalname Typename
+    }
+    -- | A binary operation
   | Binop {
       -- | The operator.
       binopOp :: !Binop,
@@ -244,7 +249,7 @@ data Exp tagty =
       -- | The position in source from which this arises.
       binopPos :: DWARFPosition Globalname Typename
     }
-  -- | Call a function.
+    -- | Call a function.
   | Call {
       -- | The function being called.  Must be a function value.
       callFunc :: Exp tagty,
@@ -253,7 +258,7 @@ data Exp tagty =
       -- | The position in source from which this arises.
       callPos :: DWARFPosition Globalname Typename
     }
-  -- | A unary operation
+    -- | A unary operation
   | Unop {
       -- | The operator.
       unopOp :: !Unop,
@@ -262,7 +267,7 @@ data Exp tagty =
       -- | The position in source from which this arises.
       unopPos :: DWARFPosition Globalname Typename
     }
-  -- | A conversion from one type to another.
+    -- | A conversion from one type to another.
   | Conv {
       -- | The type to which the value is being converted.
       convTy :: Type tagty,
@@ -271,8 +276,8 @@ data Exp tagty =
       -- | The position in source from which this arises.
       convPos :: DWARFPosition Globalname Typename
     }
-  -- | Treat an expression as if it were the given type regardless of
-  -- its actual type.
+    -- | Treat an expression as if it were the given type regardless of
+    -- its actual type.
   | Cast {
       -- | The type to which the value is being cast.
       castTy :: Type tagty,
@@ -281,14 +286,14 @@ data Exp tagty =
       -- | The position in source from which this arises.
       castPos :: DWARFPosition Globalname Typename
     }
-  -- | Address of an LValue
+    -- | Address of an LValue.
   | AddrOf {
       -- | The value having its address taken.
       addrofVal :: LValue (Exp tagty),
       -- | The position in source from which this arises.
       addrofPos :: DWARFPosition Globalname Typename
     }
-  -- | A structure literal
+    -- | A structure literal.
   | StructLit {
       -- | The literal's type, must be a struct type.
       structLitTy :: Type tagty,
@@ -297,7 +302,7 @@ data Exp tagty =
       -- | The position in source from which this arises.
       structLitPos :: DWARFPosition Globalname Typename
     }
-  -- | A variant literal
+    -- | A variant literal.
   | VariantLit {
       -- | The literal's type, must be a variant type.
       variantLitTy :: Type tagty,
@@ -308,7 +313,7 @@ data Exp tagty =
       -- | The position in source from which this arises.
       variantLitPos :: DWARFPosition Globalname Typename
     }
-  -- | An array literal
+    -- | An array literal
   | ArrayLit {
       -- | The constant's type, must be an array type.
       arrayLitTy :: Type tagty,
@@ -317,8 +322,8 @@ data Exp tagty =
       -- | The position in source from which this arises.
       arrayLitPos :: DWARFPosition Globalname Typename
     }
-  -- | A numerical constant with a given size and signedness XXX add a
-  -- floating point constant.
+    -- | A numerical constant with a given size and signedness XXX add a
+    -- floating point constant.
   | IntLit {
       -- | The constant's type, must be an integer or float type.
       intLitTy :: Type tagty,
@@ -327,8 +332,8 @@ data Exp tagty =
       -- | The position in source from which this arises.
       intLitPos :: DWARFPosition Globalname Typename
     }
-  -- | An LValue
-  | LValue !(LValue (Exp tagty))
+    -- | An LValue.
+  | LValue { lvalueData :: !(LValue (Exp tagty)) }
 
 -- | A global value.  Represents a global variable or a function.
 data Global tagty gr =
@@ -393,18 +398,18 @@ data Module tagty tagdescty gr =
     Module {
       -- | Name of the module
       modName :: !Strict.ByteString,
-      -- | A map from typenames to their proper names and possibly their
+      -- | A map from 'Typename's to their proper names and possibly their
       -- definitions
       modTypes :: !(Array Typename (TypeDef tagty)),
-      -- | A map from Tagnames to their definitions
+      -- | A map from 'Tagname's to their definitions
       modTags :: !(Array Tagname (TagDesc tagdescty)),
-      -- | Generated GC types (this module will generate the signatures
-      -- and accessors)
+      -- | Generated tagged types (this module will generate the
+      -- signatures and accessor definitions for all these 'Tagname's)
       modGenTags :: [Tagname],
-      -- | A map from global names to the corresponding definitions
+      -- | A map from 'Globalname's to the corresponding definitions
       modGlobals :: !(Array Globalname (Global tagty gr)),
-      -- | The position in source from which this arises.  This is here
-      -- solely to record filenames in a unified way.
+      -- | Should be a file position, indicating the file from which
+      -- this arises.
       modPos :: DWARFPosition Globalname Typename
     }
 
@@ -447,6 +452,8 @@ instance Eq tagty => Eq (Type tagty) where
   _ == _ = False
 
 instance Eq tagty => Eq (Exp tagty) where
+  Alloc { allocData = alloc1 } == Alloc { allocData = alloc2 } =
+    alloc1 == alloc2
   Binop { binopOp = op1, binopLeft = left1, binopRight = right1 } ==
     Binop { binopOp = op2, binopLeft = left2, binopRight = right2 } =
     op1 == op2 && left1 == left2 && right1 == right2
@@ -555,8 +562,10 @@ instance Ord tagty => Ord (Type tagty) where
   compare (UnitType _) (UnitType _) = EQ
 
 instance Ord tagty => Ord (Exp tagty) where
-  compare (GCAlloc _ _ _) _ = error "GCAlloc is going away"
-  compare _ (GCAlloc _ _ _) = error "GCAlloc is going away"
+  compare Alloc { allocData = alloc1 } Alloc { allocData = alloc2 } =
+    compare alloc1 alloc2
+  compare Alloc {} _ = LT
+  compare _ Alloc {} = GT
   compare Binop { binopOp = op1, binopLeft = left1, binopRight = right1 }
           Binop { binopOp = op2, binopLeft = left2, binopRight = right2 } =
     case compare op1 op2 of
@@ -630,7 +639,8 @@ instance Ord tagty => Ord (Exp tagty) where
       out -> out
   compare IntLit {} _ = LT
   compare _ IntLit {} = GT
-  compare (LValue lval1) (LValue lval2) = compare lval1 lval2
+  compare LValue { lvalueData = lval1 } LValue { lvalueData = lval2 } =
+    compare lval1 lval2
 
 instance Hashable tagty => Hashable (FieldDef tagty) where
   hashWithSalt s FieldDef { fieldDefName = name, fieldDefTy = ty,
@@ -667,6 +677,8 @@ instance Hashable tagty => Hashable (Type tagty) where
   hashWithSalt s UnitType {} = s `hashWithSalt` (7 :: Int)
 
 instance Hashable tagty => Hashable (Exp tagty) where
+  hashWithSalt s Alloc { allocData = alloc } =
+    s `hashWithSalt` (0 :: Int) `hashWithSalt` alloc
   hashWithSalt s Binop { binopOp = op, binopLeft = left, binopRight = right } =
     s `hashWithSalt` (1 :: Int) `hashWithSalt`
     op `hashWithSalt` left `hashWithSalt` right
@@ -692,7 +704,6 @@ instance Hashable tagty => Hashable (Exp tagty) where
     s `hashWithSalt` (10 :: Int) `hashWithSalt` ty `hashWithSalt` val
   hashWithSalt s (LValue lval) =
     s `hashWithSalt` (11 :: Int) `hashWithSalt` lval
-  hashWithSalt _ (GCAlloc {}) = error "GCAlloc is going away"
 
 instance RenameType Typename (FieldDef tagty) where
   renameType f fdef @ FieldDef { fieldDefTy = ty } =
@@ -717,6 +728,8 @@ instance RenameType Typename (Type tagty) where
   renameType _ ty = ty
 
 instance RenameType Typename (Exp tagty) where
+  renameType f a @ Alloc { allocData = alloc } =
+    a { allocData = renameType f alloc }
   renameType f e @ Binop { binopLeft = left, binopRight = right } =
     e { binopLeft = renameType f left, binopRight = renameType f right }
   renameType f e @ Call { callFunc = func, callArgs = args } =
@@ -729,7 +742,8 @@ instance RenameType Typename (Exp tagty) where
   renameType f e @ AddrOf { addrofVal = val } =
     e { addrofVal = renameType f val }
   renameType f e @ StructLit { structLitFields = fields, structLitTy = ty } =
-    e { structLitFields = renameType f fields, structLitTy = renameType f ty }
+    e { structLitFields = renameTypeArray f fields,
+        structLitTy = renameType f ty }
   renameType f e @ VariantLit { variantLitVal = val, variantLitTy = ty } =
     e { variantLitVal = renameType f val, variantLitTy = renameType f ty }
   renameType f e @ ArrayLit { arrayLitVals = vals, arrayLitTy = ty } =
@@ -737,9 +751,9 @@ instance RenameType Typename (Exp tagty) where
   renameType f e @ IntLit { intLitTy = ty } =
     e { intLitTy = renameType f ty }
   renameType f (LValue l) = LValue (renameType f l)
-  renameType _ e = e
 
 instance Rename Id (Exp tagty) where
+  rename f a @ Alloc { allocData = alloc } = a { allocData = rename f alloc }
   rename f e @ Binop { binopLeft = left, binopRight = right } =
     e { binopLeft = rename f left, binopRight = rename f right }
   rename f e @ Call { callFunc = func, callArgs = args } =
@@ -749,7 +763,7 @@ instance Rename Id (Exp tagty) where
   rename f e @ Unop { unopVal = val } = e { unopVal = rename f val }
   rename f e @ AddrOf { addrofVal = val } = e { addrofVal = rename f val }
   rename f e @ StructLit { structLitFields = fields } =
-    e { structLitFields = rename f fields }
+    e { structLitFields = renameArray f fields }
   rename f e @ VariantLit { variantLitVal = val } =
     e { variantLitVal = rename f val }
   rename f e @ ArrayLit { arrayLitVals = vals } =
@@ -1174,7 +1188,7 @@ instance (GenericXMLString tag, Show tag, GenericXMLString text, Show text,
          XmlPickler [NodeG [] tag text] (Exp typetag) where
   xpickle =
     let
-      picker GCAlloc {} = 0
+      picker Alloc {} = 0
       picker Binop {} = 1
       picker Call {} = 1
       picker Unop {} = 2
