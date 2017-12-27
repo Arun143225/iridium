@@ -68,14 +68,13 @@ import qualified IR.FlatIR.LLVMGen.Globals as Globals
 import qualified IR.FlatIR.LLVMGen.Metadata as Metadata
 import qualified IR.FlatIR.LLVMGen.Types as Types
 
-
 -- | Generate LLVM IR from the FlatIR module.
 toLLVM :: Graph gr
        => Module gr
        -- ^ The FlatIR module being translated.
        -> IO LLVM.ModuleRef
        -- ^ The LLVM Module.
-toLLVM irmod @ (Module { modName = name }) =
+toLLVM irmod @ Module { modName = name } =
   let
     genTypeDefs = Types.genTypeDefs irmod
     genGCHeaders = GCHeaders.genGCHeaders irmod
