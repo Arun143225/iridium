@@ -43,8 +43,8 @@ module IR.Common.Body(
 
 import Data.Graph.Inductive.Graph hiding (out)
 import Data.Hashable
-import Data.Hashable.Extras
-import Data.Map(Map)
+import Data.HashMap.Strict(HashMap)
+import Data.List
 import Data.Position.DWARFPosition(DWARFPosition)
 import IR.Common.LValue
 import IR.Common.Names
@@ -54,7 +54,7 @@ import Text.Format hiding (concat)
 import Text.XML.Expat.Pickle hiding (Node)
 import Text.XML.Expat.Tree(NodeG)
 
-import qualified Data.Map as Map
+import qualified Data.HashMap.Strict as HashMap
 
 -- | A statement.  Represents an effectful action for the statement
 -- form of the IR.
@@ -66,7 +66,7 @@ data Stm exp =
       -- | The source expression.
       moveSrc :: exp,
       -- | The position in source from which this originates.
-      movePos :: DWARFPosition Globalname Typename
+      movePos :: !(DWARFPosition Globalname Typename)
     }
   -- | Execute an expression
   | Do { doExp :: !exp }
@@ -79,9 +79,9 @@ data Phi =
     -- | The name being bound.
     phiName :: !Id,
     -- | A map from inbound edges to values
-    phiVals :: !(Map Label Id),
+    phiVals :: !(HashMap Label Id),
     -- | The position in source from which this arises.
-    phiPos :: DWARFPosition Globalname Typename
+    phiPos :: !(DWARFPosition Globalname Typename)
   }
 
 -- | A binding.  Represents an SSA binding in the SSA form of the
@@ -93,7 +93,7 @@ data Bind exp =
       -- | The value beind bound.
       bindVal :: exp,
       -- | The position in source from which this originates.
-      bindPos :: DWARFPosition Globalname Typename
+      bindPos :: !(DWARFPosition Globalname Typename)
     }
     -- | Execute an expression for its effect only.  Analogous to Do
     -- in the statement language.
@@ -107,7 +107,7 @@ data Block exp elems =
       -- | The transfer for the basic block
       blockXfer :: Transfer exp,
       -- | The position in source from which this arises.
-      blockPos :: DWARFPosition Globalname Typename
+      blockPos :: !(DWARFPosition Globalname Typename)
     }
 
 -- There is no straightforward ordering, equality, or hashing on Body.
@@ -157,15 +157,18 @@ instance Ord1 Stm where
     case compare src1 src2 of
       EQ -> compare dst1 dst2
       out -> out
-  compare1 (Move {}) _ = LT
-  compare1 _ (Move {}) = GT
+  compare1 Move {} _ = LT
+  compare1 _ Move {} = GT
   compare1 (Do exp1) (Do exp2) = compare exp1 exp2
 
 instance Ord Phi where
   compare Phi { phiName = name1, phiVals = vals1 }
           Phi { phiName = name2, phiVals = vals2 } =
-    case compare name1 name2 of
-      EQ -> compare vals1 vals2
+    let
+      sortedvals1 = sort (HashMap.toList vals1)
+      sortedvals2 = sort (HashMap.toList vals2)
+    in case compare name1 name2 of
+      EQ -> compare sortedvals1 sortedvals2
       out -> out
 
 instance Ord1 Bind where
@@ -189,31 +192,27 @@ instance Ord exp => Ord (Bind exp) where compare = compare1
 instance Ord exp => Ord (Stm exp) where compare = compare1
 instance (Ord exp, Ord elem) => Ord (Block elem exp) where compare = compare2
 
-instance Hashable1 Stm where
-  hashWithSalt1 s Move { moveSrc = src, moveDst = dst } =
+instance Hashable exp => Hashable (Stm exp) where
+  hashWithSalt s Move { moveSrc = src, moveDst = dst } =
     s `hashWithSalt` (1 :: Int) `hashWithSalt` src `hashWithSalt` dst
-  hashWithSalt1 s (Do val) = s `hashWithSalt` (2 :: Int) `hashWithSalt` val
+  hashWithSalt s (Do val) = s `hashWithSalt` (2 :: Int) `hashWithSalt` val
 
 instance Hashable Phi where
   hashWithSalt s Phi { phiName = name, phiVals = vals } =
-    s `hashWithSalt` name `hashWithSalt` Map.toList vals
-
-instance Hashable1 Bind where
-  hashWithSalt1 s Bind { bindName = name1, bindVal = val1 } =
-    s `hashWithSalt` (1 :: Int) `hashWithSalt` name1 `hashWithSalt` val1
-  hashWithSalt1 s (Effect e1) =
-    s `hashWithSalt` (2 :: Int) `hashWithSalt` e1
-
-instance Hashable2 Block where
-  hashWithSalt2 s Block { blockBody = body, blockXfer = xfer } =
-    s `hashWithSalt` xfer `hashWithSalt` body
+    let
+      sortedvals = sort (HashMap.toList vals)
+    in
+      s `hashWithSalt` name `hashWithSalt` sortedvals
 
 instance Hashable exp => Hashable (Bind exp) where
-  hashWithSalt = hashWithSalt1
-instance Hashable exp => Hashable (Stm exp) where
-  hashWithSalt = hashWithSalt1
+  hashWithSalt s Bind { bindName = name1, bindVal = val1 } =
+    s `hashWithSalt` (1 :: Int) `hashWithSalt` name1 `hashWithSalt` val1
+  hashWithSalt s (Effect e1) =
+    s `hashWithSalt` (2 :: Int) `hashWithSalt` e1
+
 instance (Hashable exp, Hashable elem) => Hashable (Block elem exp) where
-  hashWithSalt = hashWithSalt2
+  hashWithSalt s Block { blockBody = body, blockXfer = xfer } =
+    s `hashWithSalt` xfer `hashWithSalt` body
 
 instance Format exp => Format (Stm exp) where
   format Move { moveDst = dst, moveSrc = src } =
@@ -224,7 +223,7 @@ instance Format Phi where
   format Phi { phiName = name, phiVals = vals } =
     let
       mapfun (l, v) = format l <> colon <+> format v
-      choicedocs = map mapfun (Map.toList vals)
+      choicedocs = map mapfun (HashMap.toList vals)
     in
       format name <+> string "<- phi" <+> list choicedocs
 
@@ -353,9 +352,9 @@ instance (GenericXMLString tag, Show tag, GenericXMLString text, Show text) =>
                                            (xpPair xpickle xpickle)))
     in
       xpWrap (\(name, (vals, pos)) -> Phi { phiName = name, phiPos = pos,
-                                            phiVals = Map.fromList vals },
+                                            phiVals = HashMap.fromList vals },
               \Phi { phiName = name, phiPos = pos, phiVals = vals } ->
-                (name, (Map.toList vals, pos)))
+                (name, (HashMap.toList vals, pos)))
              (xpElem (gxFromString "Phi") xpickle
                      (xpPair (xpElemNodes (gxFromString "vals") optionPickler)
                              (xpElemNodes (gxFromString "pos") xpickle)))

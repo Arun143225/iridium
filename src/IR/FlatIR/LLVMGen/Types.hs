@@ -35,6 +35,8 @@ module IR.FlatIR.LLVMGen.Types(
        genTypeDefs
        ) where
 
+import Control.Monad.Trans
+import Control.Monad.LLVMGen.Metadata.Debug
 import Data.Array
 import Data.Graph.Inductive.Graph
 import IR.Common.Ptr
@@ -42,9 +44,9 @@ import IR.FlatIR.Syntax
 import Prelude hiding (mapM_, mapM, foldr, foldl, sequence)
 
 import qualified Data.ByteString.UTF8 as Strict
-import qualified LLVM.General.AST as LLVM
-import qualified LLVM.General.AST.AddrSpace as LLVM
-import qualified LLVM.General.AST.Type as LLVM
+import qualified LLVM.AST as LLVM
+import qualified LLVM.AST.AddrSpace as LLVM
+import qualified LLVM.AST.Type as LLVM
 
 -- | Generate the LLVM type for a given Flat IR type.
 toLLVMType :: Graph gr =>

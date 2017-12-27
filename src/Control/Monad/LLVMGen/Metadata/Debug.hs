@@ -61,30 +61,32 @@ import Control.Monad.Symbols
 import Data.Array.Unboxed
 import Data.HashTable.IO(BasicHashTable)
 import Data.Intervals
-import Data.Position.DWARFPosition
 import Data.Position.Filename
-import LLVM.General.AST
-import LLVM.General.AST.Constant
+import IR.FlatIR.Syntax
+
+import qualified LLVM.AST as LLVM
+import qualified LLVM.AST.Constant as LLVM
 
 import qualified Data.ByteString.UTF8 as Strict
 import qualified Data.HashTable.IO as HashTable
 import qualified Data.Position.Point as Point
+import qualified Data.Position.DWARFPosition as Position
 
 data Context =
   Context {
     -- | Map from 'FileInfo's to metadatas representing DWARF file objects.
-    ctxFileDebugMD :: !(BasicHashTable FileInfo Operand),
+    ctxFileDebugMD :: !(BasicHashTable FileInfo LLVM.Operand),
     -- | Map from 'FileInfo's to metadata ID's for compilation units.
     -- Note that the actual compilation units are assembled at the
     -- end.
     ctxCompUnitMD :: !(BasicHashTable FileInfo Word),
     -- | Map from position info to metadatas representing DWARF
     -- position objects.
-    ctxPosDebugMD :: !(BasicHashTable Point.PointInfo Operand),
+    ctxPosDebugMD :: !(BasicHashTable Point.PointInfo LLVM.Operand),
     -- | Map from 'Type's to metadatas representing DWARF type descriptors.
-    ctxTypeDebugMD :: !(BasicHashTable Type Operand),
+    ctxTypeDebugMD :: !(BasicHashTable Type LLVM.Operand),
     -- | Map from block positions to medatadas representing the blocks.
-    ctxBlockMD :: !(BasicHashTable SimplePosition Operand),
+    ctxBlockMD :: !(BasicHashTable Position.SimplePosition LLVM.Operand),
     -- | Array mapping 'Globalname's to metadata ID's.
     ctxGlobalIDs :: !(UArray Word Word),
     -- | Array mapping 'Typename's to metadata ID's.
@@ -95,6 +97,31 @@ newtype DebugMetadataT m a =
   DebugMetadataT { unpackDebugMetadataT :: ReaderT Context m a }
 
 type DebugMetadata = DebugMetadataT IO
+
+mdBool1 :: Bool -> LLVM.Operand
+mdBool1 b =
+  ConstantOperand $! LLVM.Int { LLVM.integerBits = 1,
+                                LLVM.integerValue = if b then 1 else 0 }
+
+mdInt32 :: Integer -> LLVM.Operand
+mdInt32 n = ConstantOperand $! LLVM.Int { LLVM.integerBits = 32,
+                                          LLVM.integerValue = n }
+
+mdInt32Zero :: Integer -> LLVM.Operand
+mdInt32Zero = mdInt32 0
+
+mdInt64 :: Integer -> LLVM.Operand
+mdInt64 n = ConstantOperand $! LLVM.Int { LLVM.integerBits = 64,
+                                          LLVM.integerValue = n }
+
+mdBStr :: Strict.ByteString -> LLVM.Operand
+mdBStr = MetadataStringOperand $! Strict.toString
+
+mdInt64Zero :: Integer -> LLVM.Operand
+mdInt64Zero = mdInt64 0
+
+mdOperandFromId :: Int -> LLVM.Operand
+mdOperandFromId = MetadataNodeOperand $! MetadataNodeReference . MetadataNodeID
 
 -- | Generate global metadata IDs.  These are not defined yet.
 genGlobalIDs :: (MonadIO m, MonadMetadata m) =>
@@ -141,7 +168,7 @@ runDebugMetadataT c mod =
     runReaderT (unpackDebugMetadataT c)
                Context { ctxFileDebugMD = fileTab, ctxCompUnitMD = compUnitTab,
                          ctxPosDebugMD = posTab, ctxTypeDebugMD = typeTab,
-                         ctxBlockMD = blockTab, ctxGlobalMD = globalArr,
+                         ctxBlockMD = blockTab, ctxGlobalIDs = globalArr,
                          ctxTypeDefIDs = typedefArr }
 
 runDebugMetadata :: DebugMetadata a
@@ -151,7 +178,7 @@ runDebugMetadata = runDebugMetadataT
 
 getCompUnitMD' :: (MonadIO m, MonadMetadata m, MonadCompileParams m) =>
                   FileInfo
-               -> ReaderT Context m Operand
+               -> ReaderT Context m LLVM.Operand
 getCompUnitMD' finfo @ FileInfo { fileInfoName = fname, fileInfoDir = dir } =
   do
     Context { ctxCompUnitMD = tab, ctxLangCode = langcode } <- ask
@@ -166,36 +193,20 @@ getCompUnitMD' finfo @ FileInfo { fileInfoName = fname, fileInfoDir = dir } =
         let
           createMD =
             let
-              mdcontent = [Just $! ConstantOperand $!
-                           Int { integerBits = 32,
-                                 -- DW_TAG_compile_unit
-                                 integerValue = 0xc0011 },
+              mdcontent = [-- DW_TAG_compile_unit
+                           Just $! mdInt32 0xc0011,
                            Nothing,
-                           Just $! ConstantOperand $!
-                           Int { integerBits = 32,
-                                 integerValue = langcode },
-                           Just $! MetadataStringOperand $!
-                           Strict.toString fname,
-                           Just $! MetadataStringOperand $!
-                           Strict.toString dir,
-                           Just $! MetadataStringOperand $!
-                           Strict.toString prodname,
-                           Just $! ConstantOperand $!
-                           Int { integerBits = 1,
-                                 integerValue = if ismain then 1 else 0 },
-                           Just $! ConstantOperand $!
-                           Int { integerBits = 1,
-                                 integerValue = if isopt then 1 else 0 },
-                           Just $! MetadataStringOperand $!
-                           Strict.toString flags,
-                           Just $! ConstantOperand $!
-                           Int { integerBits = 32,
-                                 integerValue = vers }]
+                           Just $! mdInt32 langcode,
+                           Just $! mdBStr fname,
+                           Just $! mdBStr dir,
+                           Just $! mdBStr prodname,
+                           Just $! mdBool1 ismain,
+                           Just $! mdBool1 isopt,
+                           Just $! mdBStr flags,
+                           Just $! mdInt32 vers]
             in do
               idx <- lift $! createMetadataNode mdcontent
-              return $! MetadataNodeOperand $!
-                        MetadataNodeReference $!
-                        MetadataNodeID idx
+              return $! mdOperandFromId idx
         in do
           idx <- createMD
           liftIO $! HashTable.insert tab finfo idx
@@ -203,7 +214,7 @@ getCompUnitMD' finfo @ FileInfo { fileInfoName = fname, fileInfoDir = dir } =
 
 getFileInfoMD' :: (MonadIO m, MonadMetadata m) =>
                   FileInfo
-               -> ReaderT Context m Operand
+               -> ReaderT Context m LLVM.Operand
 getFileInfoMD' finfo @ FileInfo { fileInfoName = fname, fileInfoDir = dir } =
   do
     Context { ctxFileDebugMD = tab } <- ask
@@ -214,21 +225,15 @@ getFileInfoMD' finfo @ FileInfo { fileInfoName = fname, fileInfoDir = dir } =
         let
           createMD =
             let
-              mdcontent = [Just $! ConstantOperand $!
-                           Int { integerBits = 32,
-                                 -- DW_TAG_file_type
-                                 integerValue = 0xc0029 },
-                           Just $! MetadataStringOperand $!
-                           Strict.toString fname,
-                           Just $! MetadataStringOperand $!
-                           Strict.toString dir,
+              mdcontent = [-- DW_TAG_file_type
+                           Just $! mdInt32 0xc0029,
+                           Just $! mdBStr fname,
+                           Just $! mdBStr dir,
                            Nothing]
 
             in do
               idx <- lift $! createMetadataNode mdcontent
-              return $! MetadataNodeOperand $!
-                        MetadataNodeReference $!
-                        MetadataNodeID idx
+              return $! mdOperandFromId idx
         in do
           idx <- createMD
           liftIO $! HashTable.insert tab finfo idx
@@ -236,13 +241,13 @@ getFileInfoMD' finfo @ FileInfo { fileInfoName = fname, fileInfoDir = dir } =
 
 
 getSimplePositionMD :: (MonadIO m, MonadMetadata m, MonadPositions m) =>
-                        SimplePosition
-                     -> ReaderT Context m Operand
+                        Position.SimplePosition
+                     -> ReaderT Context m LLVM.Operand
 getSimplePositionMD pos =
   let
     startpoint = case pos of
-      Span { spanStart = startpoint' } -> startpoint'
-      Point { pointPos = startpoint' } -> startpoint'
+      Position.Span { Position.spanStart = startpoint' } -> startpoint'
+      Position.Point { Position.pointPos = startpoint' } -> startpoint'
   in do
     key @ Point.PointInfo { Point.pointLine = line,
                             Point.pointColumn = col,
@@ -255,15 +260,13 @@ getSimplePositionMD pos =
         let
           createMD filemd =
             let
-              mdcontent = [Just $! ConstantOperand $! Int 32 (toInteger line),
-                           Just $! ConstantOperand $! Int 32 (toInteger col),
+              mdcontent = [Just $! mdInt32 line,
+                           Just $! mdInt32 col,
                            Just filemd,
                            Nothing]
             in do
               idx <- lift $! createMetadataNode mdcontent
-              return $! MetadataNodeOperand $!
-                        MetadataNodeReference $!
-                        MetadataNodeID idx
+              return $! mdOperandFromId idx
         in do
           fileinfo <- fileInfo fname
           filemd <- getFileInfoMD' fileinfo
@@ -271,44 +274,58 @@ getSimplePositionMD pos =
           liftIO $! HashTable.insert tab key idx
           return idx
 
-startPoint :: DWARFPosition funcid Typename -> Maybe Position.Point
-startPoint Func { funcPos = Point { pointPos = point } } = Just point
-startPoint Func { funcPos = Span { spanStart = point } } = Just point
-startPoint TypeDef { typeDefPos = Point { pointPos = point } } = Just point
-startPoint TypeDef { typeDefPos = Span { spanStart = point } } = Just point
-startPoint Block { blockPos = Point { pointPos = point } } = Just point
-startPoint Block { blockPos = Span { spanStart = point } } = Just point
-startPoint Simple { simplePos = Point { pointPos = point } } = Just point
-startPoint Simple { simplePos = Span { spanStart = point } } = Just point
+startPoint :: Position.DWARFPosition funcid Typename -> Maybe Point.Point
+startPoint Position.TypeDef {
+             Position.typeDefPos = Position.Point { Position.pointPos = point }
+           } =
+  Just point
+startPoint Position.TypeDef {
+             Position.typeDefPos = Position.Span { Position.spanStart = point }
+           } =
+  Just point
+startPoint Position.Block {
+             Position.blockPos = Position.Point { Position.pointPos = point }
+           } =
+  Just point
+startPoint Position.Block {
+             Position.blockPos = Position.Span { Position.spanStart = point }
+           } =
+  Just point
+startPoint Position.Simple {
+             Position.simplePos = Position.Point { Position.pointPos = point }
+           } =
+  Just point
+startPoint Position.Simple {
+             Position.simplePos = Position.Span { Position.spanStart = point }
+           } =
+  Just point
 startPoint _ = Nothing
 
 getContextMD' :: (MonadIO m, MonadMetadata m, MonadPositions m) =>
-                 Module -> DWARFPosition Globalname Typename ->
-                 ReaderT Context m (Maybe Operand)
+                 Module -> Position.DWARFPosition Globalname Typename ->
+                 ReaderT Context m (Maybe LLVM.Operand)
 -- For a Def, look up the global's metadata.  It should have already
 -- been generated.
 getContextMD' _ Def { defId = globalname } =
   do
     Context { ctxGlobalIDs = globalids } <- ask
-    return $! MetadataNodeOperand $! MetadataNodeReference $!
-              MetadataNodeID $! globalids ! (toEnum globalname)
+    return $! mdOperandFromId $! globalids ! toEnum globalname
 -- For a TypeDef, look up the typedef medatada ID.  It should have
 -- already been generated.
-getContextMD' _ TypeDef { typeDefId = tyname } =
+getContextMD' _ Position.TypeDef { Position.typeDefId = tyname } =
   do
     Context { ctxTypeDefIDs = typedefids } <- ask
-    return $! MetadataNodeOperand $! MetadataNodeReference $!
-              MetadataNodeID $! typedefids ! (toEnum tyname)
+    return $! mdOperandFromId $! typedefids ! toEnum tyname
 -- For a block, we'll need to generate the block ourselves.
-getContextMD' mod Block { blockCtx = ctx } =
+getContextMD' mod Position.Block { Position.blockCtx = ctx } =
   case startPoint ctx of
     -- Technically this shouldn't happen, but handle it anyway.
     Nothing -> return Nothing
     -- Get the start point and generate the block info.
     Just startpoint ->
       do
-        Point.PointInfo { pointLine = line, pointColumn = col,
-                          pointFile = fname } <- pointInfo startpoint
+        Point.PointInfo { Point.pointLine = line, Point.pointColumn = col,
+                          Point.pointFile = fname } <- pointInfo startpoint
         Context { ctxBlockMD = tab } <- ask
         res <- liftIO $! HashTable.lookup tab pos
         case res of
@@ -318,21 +335,16 @@ getContextMD' mod Block { blockCtx = ctx } =
               createMD ctxmd filemd =
                 let
                   mdcontent =
-                    [Just $! ConstantOperand $! Int { integerBits = 32,
-                                                      -- DW_TAG_lexical_block
-                                                      integerValue = 0xc000b },
+                    [-- DW_TAG_lexical_block
+                     Just $! mdInt32 0xc000b,
                      filemd,
                      ctxmd,
-                     Just $! ConstantOperand $! Int { integerBits = 32,
-                                                      integerValue = line },
-                     Just $! ConstantOperand $! Int { integerBits = 32,
-                                                      integerValue = col },
+                     Just $! mdInt32 line,
+                     Just $! mdInt32 col,
                      Nothing]
                 in do
                   idx <- lift $! createMetadataNode mdcontent
-                  return $! MetadataNodeOperand $!
-                            MetadataNodeReference $!
-                            MetadataNodeID idx
+                  return $! mdOperandFromId idx
             in do
               ctxmd <- getContextMD' mod ctx
               fileinfo <- fileInfo fname
@@ -343,42 +355,41 @@ getContextMD' mod Block { blockCtx = ctx } =
           -- Otherwise just return it
           out -> return out
 -- The context for a simple position is its compile unit descriptor.
-getContextMD' mod Simple { simplePos = pos } =
+getContextMD' mod Position.Simple { Position.simplePos = pos } =
   let
     startpoint = case ctx of
-      Point { pointPos = point } -> point
-      Span { spanStart = point } -> point
+      Position.Point { Position.pointPos = point } -> point
+      Position.Span { Position.spanStart = point } -> point
   in do
-    Point.PointInfo { pointFile = fname } <- pointInfo startpoint
+    Point.PointInfo { Position.pointFile = fname } <- pointInfo startpoint
     getCompUnitMD' mod fname
 -- Other positions have no context.
-getPositionMD' _ Synthetic {} = return Nothing
-getPositionMD' _ File {} = return Nothing
-getPositionMD' _ CmdLine = return Nothing
+getPositionMD' _ Position.Synthetic {} = return Nothing
+getPositionMD' _ Position.File {} = return Nothing
+getPositionMD' _ Position.CmdLine = return Nothing
 
 -- XXX Use the typedef ID array here
 createTypeDefMD :: (MonadIO m, MonadMetadata m, MonadPositions m) =>
-                   FileInfo -> Integer -> String -> Maybe Operand ->
-                   ReaderT Context m Operand
+                   FileInfo -> Integer -> String -> Maybe LLVM.Operand ->
+                   ReaderT Context m LLVM.Operand
 createTypeDefMD FileInfo { fileInfoName = fname, fileInfoDir = dir }
                 line str tymd =
   let
     mdcontent =
-      [Just $! ConstantOperand $! Int { integerBits = 32,
-                                        -- DW_TAG_typedef
-                                        integerValue = 0xc0016 },
-       Just $! MetadataStringOperand (Strict.toString fname),
-       Just $! MetadataStringOperand (Strict.toString dir),
+      [-- DW_TAG_typedef
+       Just $! mdInt32 0xc0016,
+       Just $! mdBStr fname,
+       Just $! mdBStr dir,
        Just $! MetadataStringOperand str,
-       Just $! ConstantOperand $! Int { integerBits = 32, integerValue = line },
-       Just $! ConstantOperand $! Int { integerBits = 64, integerValue = 0 },
-       Just $! ConstantOperand $! Int { integerBits = 64, integerValue = 0 },
-       Just $! ConstantOperand $! Int { integerBits = 64, integerValue = 0 },
-       Just $! ConstantOperand $! Int { integerBits = 32, integerValue = 0 },
+       Just $! mdInt32 line,
+       Just $! mdInt64Zero,
+       Just $! mdInt64Zero,
+       Just $! mdInt64Zero,
+       Just $! mdInt32Zero,
        tymd]
   in do
     idx <- lift $! createMetadataNode $! mdcontent
-    return $! MetadataNodeOperand $! MetadataNodeReference $! MetadataNodeID idx
+    return $! mdOperandFromId idx
 
 genTypeDefMD' :: (MonadIO m, MonadMetadata m, MonadPositions m) =>
                  Typename
@@ -411,46 +422,43 @@ genTypeDefMD' tyname TypeDef { typeDefStr = str, typeDefTy = ty,
 
 createTypeDefMD :: (MonadIO m, MonadMetadata m, MonadPositions m,
                     MonadCompileParams m) =>
-                   [Maybe Operand] ->
-                   ReaderT Context m (Maybe Operand)
+                   [Maybe LLVM.Operand] ->
+                   ReaderT Context m (Maybe LLVM.Operand)
 createTypeDefMD mdcontent =
   do
     idx <- lift $! createMetadataNode $! mdcontent
-    return $! MetadataNodeOperand $! MetadataNodeReference $! MetadataNodeID idx
+    return $! mdOperandFromId idx
 
 getTypeMD' :: (MonadIO m, MonadMetadata m, MonadPositions m,
                MonadCompileParams m) =>
-           -> Type tagty
-           -> ReaderT Context m (Maybe Operand)
+              Type tagty
+           -> ReaderT Context m (Maybe LLVM.Operand)
 getTypeMD' ty =
   do
     (md, _, _) <- createTypeMD
-    return $! Just md
+    return (Just md)
 
 createTypeMD :: (MonadIO m, MonadMetadata m, MonadPositions m,
                  MonadCompileParams m) =>
-             -> Type tagty
-             -> ReaderT Context m (Operand, Integer, Integer)
+                Type tagty
+             -> ReaderT Context m (LLVM.Operand, Integer, Integer)
 createTypeMD ty @ FuncType { funcTyRetTy = retty, funcTyArgTys = argtys,
-                             funcTyPos = pos }
+                             funcTyPos = pos } =
   let
     mdcontent size elems =
-      [Just $! ConstantOperand $! Int { integerBits = 32,
-                                        -- DW_TAG_subroutine_type
-                                        integerValue = 0xc0015 },
+      [-- DW_TAG_subroutine_type
+       Just $! mdInt32 0xc0015,
        Nothing,
        Nothing,
        Just $! MetadataStringOperand "",
        Nothing,
-       Just $! ConstantOperand $! Int { integerBits = 64,
-                                        integerValue = toInteger size },
-       Just $! ConstantOperand $! Int { integerBits = 64,
-                                        integerValue = toInteger size },
-       Just $! ConstantOperand $! Int { integerBits = 64, integerValue = 0 },
-       Just $! ConstantOperand $! Int { integerBits = 32, integerValue = 0 },
+       Just $! mdInt64 size,
+       Just $! mdInt64 size,
+       Just $! mdInt64Zero,
+       Just $! mdInt32Zero,
        Nothing,
        Just elems,
-       Just $! ConstantOperand $! Int { integerBits = 32, integerValue = 0 },
+       Just $! mdInt32Zero,
        Nothing,
        Nothing]
   in do
@@ -460,79 +468,69 @@ createTypeMD ty @ FuncType { funcTyRetTy = retty, funcTyArgTys = argtys,
     argsmd <- mapM getTypeMD' argtys
     typemd <- lift $! createMetadataNode (mdcontent ptrsize (retmd : argsmd))
     liftIO $! HashTable.insert tab ty typemd
-    return (MetadataNodeOperand $! MetadataNodeReference $!
-            MetadataNodeID typemd, 0, 0)
+    return (mdOperandFromId typemd, 0, 0)
 createTypeMD ty @ StructType { structFields = fields } =
   let
     createFieldMD :: (MonadIO m, MonadMetadata m, MonadPositions m,
                       MonadCompileParams m) =>
-                     Operand -> Operand -> Operand ->
-                     ([Operand], Word) -> Field ->
-                     ReaderT Context m ([Operand], Word)
+                     LLVM.Operand -> LLVM.Operand -> LLVM.Operand ->
+                     ([LLVM.Operand], Word) -> FieldDef ->
+                     ReaderT Context m ([LLVM.Operand], Word)
     createFieldMD structmd filemd ctxmd (fields, offset)
-                  Field { fieldName = bstr, fieldMutability = _,
-                          fieldTy = ty, fieldPos = pos } =
+                  FieldDef { fieldDefName = bstr, fieldDefMutability = _,
+                             fieldDefTy = ty, fieldDefPos = pos } =
       let
         fieldmd linenum size align =
-          [Just $! ConstantOperand $! Int { integerBits = 32,
-                                            -- DW_TAG_member
-                                            integerValue = 0xc000d },
+          [-- DW_TAG_member
+           Just $! mdInt32 0xc000d,
            filemd,
            ctxmd,
-           Just $! MetadataStringOperand (toString bstr),
-           Just $! ConstantOperand $! Int { integerBits = 32,
-                                            integerValue = toInteger linenum },
-           Just $! ConstantOperand $! Int { integerBits = 64,
-                                            integerValue = toInteger size },
-           Just $! ConstantOperand $! Int { integerBits = 64,
-                                            integerValue = toInteger align },
-           Just $! ConstantOperand $! Int { integerBits = 64,
-                                            integerValue = toInteger offset },
-           Just $! ConstantOperand $! Int { integerBits = 64,
-                                            integerValue = 0 },
+           Just $! mdBStr bstr,
+           Just $! mdInt32 (toInteger linenum),
+           Just $! mdInt64 size,
+           Just $! mdInt64 align,
+           Just $! mdInt64 offset,
+           Just $! mdInt64Zero,
            structmd]
       in do
         (innerty, innersize, inneralign) <- createTypeMD inner
+        _
 
     mdcontent size align fields =
-      [Just $! ConstantOperand $! Int { integerBits = 32,
-                                        -- DW_TAG_struct_type
-                                        integerValue = 0xc0013 },
+      [-- DW_TAG_struct_type
+       Just $! mdInt32 0xc0013,
        Nothing,
        Nothing,
        Just $! MetadataStringOperand "",
        Nothing,
-       Just $! ConstantOperand $! Int { integerBits = 64, integerValue = size },
-       Just $! ConstantOperand $! Int { integerBits = 64,
-                                        integerValue = align },
-       Just $! ConstantOperand $! Int { integerBits = 64, integerValue = 0 },
-       Just $! ConstantOperand $! Int { integerBits = 32, integerValue = 0 },
+       Just $! mdInt64 size,
+       Just $! mdInt64 align,
+       Just $! mdInt64Zero,
+       Just $! mdInt32Zero,
        Nothing,
        Just fields,
-       Just $! ConstantOperand $! Int { integerBits = 32, integerValue = 0 },
+       Just $! mdInt32Zero,
        Nothing,
        Nothing]
   in do
     structmd <- getMetadataID
     (fieldmds, offset) <- foldM (createField structmd) ([], 0) (reverse fields)
-    fields <- lift $! createMetadataNode [Just $! MetadataNodeOperand $!
-                                          MetadataNodeReference $!
-                                          MetadataNodeID subrange]
+    fields <- lift $! createMetadataNode [Just $! mdOperandFromId subrange]
+    _
 createTypeMD ty @ Variant { variantForms = variants, variantPos = pos } =
   let
     -- Create one enumeration value metadata
     createEnumValMD :: (MonadIO m, MonadMetadata m, MonadPositions m,
                         MonadCompileParams m) =>
-                       (Variantname, Variant) -> ReaderT Context m Operand
-    createEnumValMD (vid, Variant { variantName = bstr }) =
+                       (Variantname, FormDef)
+                    -> ReaderT Context m LLVM.Operand
+    createEnumValMD (vid, FormDef { formDefName = bstr }) =
       let
         enumvalmd =
-          [Just $! ConstantOperand $! Int { integerBits = 32,
-                                            -- DW_TAG_enumerator
-                                            integerValue = 0xc0028 },
-           Just $! MetadataStringOperand (toString bstr),
-           Just $! ConstantOperand $! Int { integerBits = 64,
-                                            integerValue = toInteger arrlen }]
+          [-- DW_TAG_enumerator
+           Just $! mdInt32 0xc0028,
+           Just $! mdBStr bstr,
+           Just $! mdInt64 (toInteger arrlen)]
       in do
         enumval <- createMetadatNode enumvalmd
         return (enumval : enumvals, variants)
@@ -541,39 +539,36 @@ createTypeMD ty @ Variant { variantForms = variants, variantPos = pos } =
     -- if there are any non-unit fields.
     createEnumValMDs :: (MonadIO m, MonadMetadata m, MonadPositions m,
                          MonadCompileParams m) =>
-                        ([Operand], Bool) ->
-                        (Variantname, Variant) ->
-                        ReaderT Context m ([Operand], Bool)
+                        ([LLVM.Operand], Bool)
+                     -> (Variantname, FormDef)
+                     -> ReaderT Context m ([LLVM.Operand], Bool)
     createEnumValMDs (enumvalmds, allunits)
-                     ent @ (_, Variant { variantTy = UnitType {} }) =
+                     ent @ (_, FormDef { formDefTy = UnitType {} }) =
       do
         enumvalmd <- createEnumValMD ent
         return (enumvalmd : enumvalmds, allunits)
     createEnumValMDs (enumvalmds, _)
-                     ent @ (_, Variant { variantTy = basety }) =
+                     ent @ (_, FormDef { formDefTy = basety }) =
       do
         enumvalmd <- createEnumValMD ent
         return (enumvalmd : enumvalmds, False)
 
     -- Create the enumeration type metadata
     enummd enumvals =
-      [Just $! ConstantOperand $! Int { integerBits = 32,
-                                        -- DW_TAG_enum_type
-                                        -- XXX get the right value
-                                        integerValue = 0xc0004 },
+      [-- DW_TAG_enum_type
+       -- XXX get the right value
+       Just $! mdInt32 0xc0004,
        Nothing,
        Nothing,
        Just $! MetadataStringOperand "",
        Nothing,
-       Just $! ConstantOperand $! Int { integerBits = 64, integerValue = size },
-       Just $! ConstantOperand $! Int { integerBits = 64,
-                                        integerValue = align },
-       Just $! ConstantOperand $! Int { integerBits = 64, integerValue = 0 },
-       Just $! ConstantOperand $! Int { integerBits = 32, integerValue = 0 },
+       Just $! mdInt64 size,
+       Just $! mdInt64 align,
+       Just $! mdInt64Zero,
+       Just $! mdInt32Zero,
        Nothing,
-       Just $! MetadataNodeOperand $! MetadataNodeReference $!
-               MetadataNodeID enumvals,
-       Just $! ConstantOperand $! Int { integerBits = 32, integerValue = 0 },
+       Just $! mdOperandFromId enumvals,
+       Just $! mdInt32Zero,
        Nothing,
        Nothing]
 
@@ -591,18 +586,18 @@ createTypeMD ty @ Variant { variantForms = variants, variantPos = pos } =
     -- if there are any non-unit fields.
     createEnumFieldMD :: (MonadIO m, MonadMetadata m, MonadPositions m,
                           MonadCompileParams m) =>
-                         Operand ->
-                         (Operand, Word, Word) ->
-                         Variant ->
-                         ReaderT Context m (Operand, Word, Word)
+                         LLVM.Operand ->
+                         (LLVM.Operand, Word, Word) ->
+                         FormDef ->
+                         ReaderT Context m (LLVM.Operand, Word, Word)
     createEnumFieldMD kindtymd (fieldmds, maxsize, maxalign)
-                      Variant { variantTy = UnitType {} } =
+                      FormDef { formDefTy = UnitType {} } =
       return (kindtymd : fieldmds, max maxsize nbits, max maxalign nbits)
     createEnumValMDs _ (fieldmds, maxsize, maxalign)
-                     Variant { variantTy = ty, variantPos = pos }
+                     FormDef { formDefTy = ty, formPos = pos } =
       let
         fieldty = StructType { structFields = array (fromEnum 0, fromEnum 1)
-                                                    [kindty, ty] }
+                                                    [kindty, ty],
                                structPacked = False, structPos = pos }
       in do
         (fieldtymd, fieldsize, fieldalign) <- createTypeMD fieldty
@@ -610,21 +605,19 @@ createTypeMD ty @ Variant { variantForms = variants, variantPos = pos } =
                 max maxalign fieldalign)
 
     mdcontent size align fields =
-      [Just $! ConstantOperand $! Int { integerBits = 32,
-                                        -- DW_TAG_union_type
-                                        integerValue = 0xc0017 },
+      [-- DW_TAG_union_type
+       Just $! mdInt32 0xc0017,
        Nothing,
        Nothing,
        Just $! MetadataStringOperand "",
        Nothing,
-       Just $! ConstantOperand $! Int { integerBits = 64, integerValue = size },
-       Just $! ConstantOperand $! Int { integerBits = 64,
-                                        integerValue = align },
-       Just $! ConstantOperand $! Int { integerBits = 64, integerValue = 0 },
-       Just $! ConstantOperand $! Int { integerBits = 32, integerValue = 0 },
+       Just $! mdInt64 size,
+       Just $! mdInt64 align,
+       Just $! mdInt64Zero,
+       Just $! mdInt32Zero,
        Nothing,
        Just fields,
-       Just $! ConstantOperand $! Int { integerBits = 32, integerValue = 0 },
+       Just $! mdInt32Zero,
        Nothing,
        Nothing]
   in do
@@ -640,30 +633,25 @@ createTypeMD ty @ Variant { variantForms = variants, variantPos = pos } =
         typemd <- lift $! createMetadataNode (mdcontent size align fieldtymds)
         return (typemd, size, align)
 createTypeMD ty @ ArrayType { arrayLen = Just arrlen, arrayElemTy = inner,
-                              arrayPos = pos }
+                              arrayPos = pos } =
   let
     subrange =
-      [Just $! ConstantOperand $! Int { integerBits = 32,
-                                        -- DW_TAG_subrange_type
-                                        integerValue = 0xc0021 },
-       Just $! ConstantOperand $! Int { integerBits = 64, integerValue = 0 },
-       Just $! ConstantOperand $! Int { integerBits = 64,
-                                        integerValue = toInteger arrlen }]
+      [-- DW_TAG_subrange_type
+       Just $! mdInt32 0xc0021,
+       Just $! mdInt64Zero,
+       Just $! mdInt64 (toInteger arrlen)]
 
     mdcontent innerty innersize inneralign elems =
-      [Just $! ConstantOperand $! Int { integerBits = 32,
-                                        -- DW_TAG_array_type
-                                        integerValue = 0xc0001 },
+      [-- DW_TAG_array_type
+       Just $! mdInt32 0xc0024,
        Nothing,
        Nothing,
        Just $! MetadataStringOperand "",
        Nothing,
-       Just $! ConstantOperand $! Int { integerBits = 64,
-                                        integerValue = innersize },
-       Just $! ConstantOperand $! Int { integerBits = 64,
-                                        integerValue = inneralign },
-       Just $! ConstantOperand $! Int { integerBits = 64, integerValue = 0 },
-       Just $! ConstantOperand $! Int { integerBits = 32, integerValue = 0 },
+       Just $! mdInt64 innersize,
+       Just $! mdInt64 inneralign,
+       Just $! mdInt64Zero,
+       Just $! mdInt32Zero,
        Just innerty,
        Just elems,
        Nothing,
@@ -679,23 +667,21 @@ createTypeMD ty @ ArrayType { arrayLen = Just arrlen, arrayElemTy = inner,
     typemd <- lift $! createMetadataNode (mdcontent innerty innersize
                                                     inneralign elems)
     liftIO $! HashTable.insert tab ty typemd
-    return (MetadataNodeOperand $! MetadataNodeReference $!
-            MetadataNodeID typemd, 0, 0)
+    return (mdOperandFromId typemd, 0, 0)
 createTypeMD ty @ ArrayType { arrayLen = Nothing, arrayElemTy = inner,
-                              arrayPos = pos }
+                              arrayPos = pos } =
   let
     mdcontent innerty =
-      [Just $! ConstantOperand $! Int { integerBits = 32,
-                                        -- DW_TAG_array_type
-                                        integerValue = 0xc0001 },
+      [-- DW_TAG_array_type
+       Just $! mdInt32 0xc0024,
        Nothing,
        Nothing,
        Just $! MetadataStringOperand "",
        Nothing,
-       Just $! ConstantOperand $! Int { integerBits = 64, integerValue = 0 },
-       Just $! ConstantOperand $! Int { integerBits = 64, integerValue = 0 },
-       Just $! ConstantOperand $! Int { integerBits = 64, integerValue = 0 },
-       Just $! ConstantOperand $! Int { integerBits = 32, integerValue = 0 },
+       Just $! mdInt64Zero,
+       Just $! mdInt64Zero,
+       Just $! mdInt64Zero,
+       Just $! mdInt32Zero,
        innerty,
        Nothing,
        Nothing,
@@ -706,28 +692,24 @@ createTypeMD ty @ ArrayType { arrayLen = Nothing, arrayElemTy = inner,
     innerty <- getTypeMD' inner
     typemd <- lift $! createMetadataNode (mdcontent innerty)
     liftIO $! HashTable.insert tab ty typemd
-    return (MetadataNodeOperand $! MetadataNodeReference $!
-            MetadataNodeID typemd, 0, 0)
+    return (mdOperandFromId typemd, 0, 0)
 createTypeMD ty @ PtrType { ptrTy = ptrty, ptrPos = pos } =
   let
     inner = case ptrty of
       Native { nativeTy = inner' } -> inner'
-      Tagged { taggedTag = tagid } -> IdType { idType = _, idPos = pos }
+      Tagged { taggedTag = tagid } -> IdType { idName = _, idPos = pos }
 
     mdcontent size innerty =
-      [Just $! ConstantOperand $! Int { integerBits = 32,
-                                        -- DW_TAG_pointer_type
-                                        integerValue = 0xc0011 },
+      [-- DW_TAG_base_type
+       Just $! mdInt32 0xc0024,
        Nothing,
        Nothing,
        Just $! MetadataStringOperand "",
        Nothing,
-       Just $! ConstantOperand $! Int { integerBits = 64,
-                                        integerValue = toInteger size },
-       Just $! ConstantOperand $! Int { integerBits = 64,
-                                        integerValue = toInteger size },
-       Just $! ConstantOperand $! Int { integerBits = 64, integerValue = 0 },
-       Just $! ConstantOperand $! Int { integerBits = 32, integerValue = 0 },
+       Just $! mdInt64 (toInteger size),
+       Just $! mdInt64 (toInteger size),
+       Just $! mdInt64Zero,
+       Just $! mdInt32Zero,
        innerty]
   in do
     Context { ctxTypeDebugMD = tab } <- ask
@@ -735,8 +717,7 @@ createTypeMD ty @ PtrType { ptrTy = ptrty, ptrPos = pos } =
     innerty <- getTypeMD' inner
     typemd <- lift $! createMetadatNode (mdcontent ptrsize innerty)
     liftIO $! HashTable.insert tab ty typemd
-    return (MetadataNodeOperand $! MetadataNodeReference $!
-            MetadataNodeID typemd, ptrsize, ptrsize)
+    return (mdOperandFromId typemd, ptrsize, ptrsize)
 createTypeMD ty @ IntType { intSigned = True, intSize = size } =
   let
     namestr = case size of
@@ -746,26 +727,22 @@ createTypeMD ty @ IntType { intSigned = True, intSize = size } =
       _ -> "u" ++ show size
 
     mdcontent =
-      [Just $! ConstantOperand $! Int { integerBits = 32,
-                                        -- DW_TAG_base_type
-                                        integerValue = 0xc0024 },
+      [-- DW_TAG_base_type
+       Just $! mdInt32 0xc0024,
        Nothing,
        Nothing,
        Just $! MetadataStringOperand namestr,
        Nothing,
-       Just $! ConstantOperand $! Int { integerBits = 64,
-                                        integerValue = toInteger size },
-       Just $! ConstantOperand $! Int { integerBits = 64,
-                                        integerValue = toInteger size },
-       Just $! ConstantOperand $! Int { integerBits = 64, integerValue = 0 },
-       Just $! ConstantOperand $! Int { integerBits = 32, integerValue = 0 },
-       Just $! ConstantOperand $! Int { integerBits = 32, integerValue = 7 }]
+       Just $! mdInt64 (toInteger size),
+       Just $! mdInt64 (toInteger size),
+       Just $! mdInt64Zero,
+       Just $! mdInt32Zero,
+       Just $! mdInt32 7]
   in do
     Context { ctxTypeDebugMD = tab } <- ask
     typemd <- lift $! createMetadataNode mdcontent
     liftIO $! HashTable.insert tab ty typemd
-    return (MetadataNodeOperand $! MetadataNodeReference $!
-            MetadataNodeID typemd, toInteger size, toInteger size)
+    return (mdOperandFromId typemd, toInteger size, toInteger size)
 createTypeMD ty @ IntType { intSigned = True, intSize = size } =
   let
     namestr = case size of
@@ -775,26 +752,22 @@ createTypeMD ty @ IntType { intSigned = True, intSize = size } =
       _ -> "i" ++ show size
 
     mdcontent =
-      [Just $! ConstantOperand $! Int { integerBits = 32,
-                                        -- DW_TAG_base_type
-                                        integerValue = 0xc0024 },
+      [-- DW_TAG_base_type
+       Just $! mdInt32 0xc0024,
        Nothing,
        Nothing,
        Just $! MetadataStringOperand namestr,
        Nothing,
-       Just $! ConstantOperand $! Int { integerBits = 64,
-                                        integerValue = toInteger size },
-       Just $! ConstantOperand $! Int { integerBits = 64,
-                                        integerValue = toInteger size },
-       Just $! ConstantOperand $! Int { integerBits = 64, integerValue = 0 },
-       Just $! ConstantOperand $! Int { integerBits = 32, integerValue = 0 },
-       Just $! ConstantOperand $! Int { integerBits = 32, integerValue = 5 }]
+       Just $! mdInt64 (toInteger size),
+       Just $! mdInt64 (toInteger size),
+       Just $! mdInt64Zero,
+       Just $! mdInt32Zero,
+       Just $! mdInt32 5]
   in do
     Context { ctxTypeDebugMD = tab } <- ask
     typemd <- lift $! createMetadataNode mdcontent
     liftIO $! HashTable.insert tab ty typemd
-    return (MetadataNodeOperand $! MetadataNodeReference $!
-            MetadataNodeID typemd, toInteger size, toInteger size)
+    return (mdOperandFromId typemd, toInteger size, toInteger size)
 createTypeMD ty @ FloatType { floatSize = size } =
   let
     namestr = case size of
@@ -806,46 +779,40 @@ createTypeMD ty @ FloatType { floatSize = size } =
       _ -> "f" ++ show size
 
     mdcontent =
-      [Just $! ConstantOperand $! Int { integerBits = 32,
-                                        -- DW_TAG_base_type
-                                        integerValue = 0xc0024 },
+      [-- DW_TAG_base_type
+       Just $! mdInt32 0xc0024,
        Nothing,
        Nothing,
        Just $! MetadataStringOperand namestr,
        Nothing,
-       Just $! ConstantOperand $! Int { integerBits = 64,
-                                        integerValue = toInteger size },
-       Just $! ConstantOperand $! Int { integerBits = 64,
-                                        integerValue = toInteger size },
-       Just $! ConstantOperand $! Int { integerBits = 64, integerValue = 0 },
-       Just $! ConstantOperand $! Int { integerBits = 32, integerValue = 0 },
-       Just $! ConstantOperand $! Int { integerBits = 32, integerValue = 4 }]
+       Just $! mdInt64 (toInteger size),
+       Just $! mdInt64 (toInteger size),
+       Just $! mdInt64Zero,
+       Just $! mdInt32Zero,
+       Just $! mdInt32 4 ]
   in do
     Context { ctxTypeDebugMD = tab } <- ask
     typemd <- lift $! createMetadataNode mdcontent
     liftIO $! HashTable.insert tab ty typemd
-    return (MetadataNodeOperand $! MetadataNodeReference $!
-            MetadataNodeID typemd, toInteger size, toInteger size)
+    return (mdOperandFromId typemd, toInteger size, toInteger size)
 createTypeMD ty @ IdType { idName = tyname } =
   do
     Context { ctxTypeDefIDs = typedefids } <- ask
-    return (MetadataNodeOperand $! MetadataNodeReference $!
-            MetadataNodeID $! typedefids ! tyname,
+    return (mdOperandFromId $! typedefids ! tyname,
             _, _)
 createTypeMD ty @ UnitType {} =
   let
     mdcontent =
-      [Just $! ConstantOperand $! Int { integerBits = 32,
-                                        -- DW_TAG_structure_type
-                                        integerValue = 0xc0013 },
+      [-- DW_TAG_structure_type
+       Just $! mdInt32 0xc0013,
        Nothing,
        Nothing,
        Just $! MetadataStringOperand "unit",
        Nothing,
-       Just $! ConstantOperand $! Int { integerBits = 64, integerValue = 0 },
-       Just $! ConstantOperand $! Int { integerBits = 64, integerValue = 0 },
-       Just $! ConstantOperand $! Int { integerBits = 64, integerValue = 0 },
-       Just $! ConstantOperand $! Int { integerBits = 32, integerValue = 0 },
+       Just $! mdInt64Zero,
+       Just $! mdInt64Zero,
+       Just $! mdInt64Zero,
+       Just $! mdInt32Zero,
        Nothing,
        Nothing,
        Nothing,
@@ -855,8 +822,7 @@ createTypeMD ty @ UnitType {} =
     Context { ctxTypeDebugMD = tab } <- ask
     typemd <- lift $! createTypeDefMD mdcontent
     liftIO $! HashTable.insert tab ty typemd
-    return (MetadataNodeOperand $! MetadataNodeReference $!
-            MetadataNodeID typemd, 0, 0)
+    return (mdOperandFromId typemd, 0, 0)
 
 instance Monad m => Applicative (DebugMetadataT m) where
   pure = return

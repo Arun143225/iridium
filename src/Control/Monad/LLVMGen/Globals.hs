@@ -64,7 +64,7 @@ import Data.List
 import IR.FlatIR.Syntax
 
 import qualified Data.ByteString.UTF8 as Strict
-import qualified LLVM.General.AST.Name as LLVM
+import qualified LLVM.AST.Name as LLVM
 
 type GlobalData = (Array Globalname LLVM.Name)
 

@@ -33,14 +33,12 @@ module Control.Monad.LLVMGen.Metadata.Debug.Class(
        MonadDebugMetadata(..)
        ) where
 
-import Control.Monad.Trans
-import Control.Monad.Positions
 import Control.Monad.LLVMGen.Metadata.Class
 import Data.Position.DWARFPosition
 import Data.Position.Filename
 import IR.Common.Names
 import IR.FlatIR.Syntax
-import LLVM.General.AST hiding (Type)
+import LLVM.AST hiding (Type)
 
 --import qualified Data.ByteString as Strict
 
@@ -67,8 +65,7 @@ class MonadMetadata m => MonadDebugMetadata m where
                 -- ^ The position.
                 -> m (Maybe Operand)
   -- | Generate a metadata node for a typedef.
-  genTypeDefMD :: (MonadIO m, MonadMetadata m, MonadPositions m) =>
-                  Typename
+  genTypeDefMD :: Typename
                -- ^ The typename associated with this typedef.
                -> TypeDef tagty
                -- ^ The typedef for which to get a metadata node.

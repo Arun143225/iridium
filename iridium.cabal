@@ -18,10 +18,9 @@ Cabal-version:       >= 1.9.2
 
 Library
   build-depends:        base, mtl, hashable, fgl, array, prelude-extras,
-                        compiler-misc, containers, hashable-extras, hexpat,
-                        hexpat-pickle, llvm-general-pure, bytestring,
-                        unordered-containers, utf8-string, hashtables, dynamic-pp,
-                        monad-journal
+                        compiler-toolbox, containers, hexpat, hexpat-pickle,
+                        bytestring, unordered-containers, utf8-string,
+                        hashtables, dynamic-pprint, monad-journal, llvm-hs-pure
   hs-source-dirs:       src
   exposed-modules:      Control.Monad.CompileParams
                         Control.Monad.CompileParams.Class
@@ -44,7 +43,7 @@ Library
                         IR.Common.RenameType.Class
                         IR.Common.TBAA
                         IR.Common.Transfer
---                        IR.FlatIR.Syntax
+                        IR.FlatIR.Syntax
 --                        IR.FlatIR.LLVMGen.Context
 --                        IR.FlatIR.LLVMGen.TBAA
 --                        IR.FlatIR.SSAConvert

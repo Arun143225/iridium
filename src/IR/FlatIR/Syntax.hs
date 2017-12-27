@@ -61,6 +61,7 @@ module IR.FlatIR.Syntax(
        -- ** Types
        Type(..),
        TypeDef(..),
+       FormDef(..),
        Ptr(..),
        Mutability(..),
 

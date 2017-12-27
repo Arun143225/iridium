@@ -55,7 +55,7 @@ import Control.Monad.SourceFiles
 import Control.Monad.SourceBuffer
 import Control.Monad.State
 import Control.Monad.Symbols
-import LLVM.General.AST hiding (Type)
+import LLVM.AST hiding (Type, Metadata)
 
 data Context =
   Context {

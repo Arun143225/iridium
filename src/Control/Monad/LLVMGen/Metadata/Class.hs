@@ -33,7 +33,7 @@ module Control.Monad.LLVMGen.Metadata.Class(
        MonadMetadata(..)
        ) where
 
-import LLVM.General.AST hiding (Type)
+import LLVM.AST hiding (Type)
 
 -- | A class of monads which create and maintain LLVM metadata.
 class Monad m => MonadMetadata m where

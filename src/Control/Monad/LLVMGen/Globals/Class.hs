@@ -53,7 +53,7 @@ import Control.Monad.Symbols
 import Control.Monad.Trans.Journal
 import Control.Monad.Writer
 import IR.Common.Names
-import LLVM.General.AST.Name
+import LLVM.AST.Name
 
 -- | A class of monads which create and maintain LLVM metadata.
 class Monad m => MonadGlobals m where

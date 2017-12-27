@@ -35,7 +35,6 @@ module IR.Common.Transfer(
        ) where
 
 import Data.Hashable
-import Data.Hashable.Extras
 import Data.Position.DWARFPosition
 import IR.Common.Names
 import IR.Common.Rename
@@ -53,7 +52,7 @@ data Transfer exp =
       -- | The jump target.
       gotoLabel :: !Label,
       -- | The position in source from which this arises.
-      gotoPos :: DWARFPosition Globalname Typename
+      gotoPos :: !(DWARFPosition Globalname Typename)
     }
   -- | A (integer) case expression
   | Case {
@@ -64,18 +63,18 @@ data Transfer exp =
       -- | The default case.
       caseDefault :: !Label,
       -- | The position in source from which this arises.
-      casePos :: DWARFPosition Globalname Typename
+      casePos :: !(DWARFPosition Globalname Typename)
     }
   -- | A return
   | Ret {
       -- | The return value, if one exists.
       retVal :: Maybe exp,
       -- | The position in source from which this arises.
-      retPos :: DWARFPosition Globalname Typename
+      retPos :: !(DWARFPosition Globalname Typename)
     }
   -- | An unreachable instruction, usually following a call with no
   -- return
-  | Unreachable { unreachablePos :: DWARFPosition Globalname Typename }
+  | Unreachable { unreachablePos :: !(DWARFPosition Globalname Typename) }
 
 instance Eq1 Transfer where
   Goto { gotoLabel = label1 } ==# Goto { gotoLabel = label2 } = label1 == label2
@@ -111,18 +110,15 @@ instance Ord1 Transfer where
 instance Ord exp => Ord (Transfer exp) where
   compare = compare1
 
-instance Hashable1 Transfer where
-  hashWithSalt1 s Goto { gotoLabel = label } =
+instance Hashable elem => Hashable (Transfer elem) where
+  hashWithSalt s Goto { gotoLabel = label } =
     s `hashWithSalt` (1 :: Int) `hashWithSalt` label
-  hashWithSalt1 s Case { caseVal = val, caseCases = cases, caseDefault = def } =
+  hashWithSalt s Case { caseVal = val, caseCases = cases, caseDefault = def } =
     s `hashWithSalt` (2 :: Int) `hashWithSalt`
       val `hashWithSalt` cases `hashWithSalt` def
-  hashWithSalt1 s Ret { retVal = val } =
+  hashWithSalt s Ret { retVal = val } =
     s `hashWithSalt` (3 :: Int) `hashWithSalt` val
-  hashWithSalt1 s (Unreachable _) = s `hashWithSalt` (4 :: Int)
-
-instance Hashable elem => Hashable (Transfer elem) where
-  hashWithSalt = hashWithSalt1
+  hashWithSalt s (Unreachable _) = s `hashWithSalt` (4 :: Int)
 
 instance RenameType Typename exp => RenameType Typename (Transfer exp) where
   renameType f tr @ Case { caseVal = val } = tr { caseVal = renameType f val  }

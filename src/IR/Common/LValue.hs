@@ -35,7 +35,6 @@ module IR.Common.LValue(
        ) where
 
 import Data.Hashable
-import Data.Hashable.Extras
 import Data.Position.DWARFPosition
 import IR.Common.Names
 import IR.Common.Rename
@@ -54,7 +53,7 @@ data LValue exp =
       -- | The index value.  Must be an integer type.
       idxIndex :: exp,
       -- | The position in source from which this arises.
-      idxPos :: DWARFPosition Globalname Typename
+      idxPos :: !(DWARFPosition Globalname Typename)
     }
   -- | A field in a structure
   | Field {
@@ -64,7 +63,7 @@ data LValue exp =
       -- | The name of the field being accessed.
       fieldName :: !Fieldname,
       -- | The position in source from which this arises.
-      fieldPos :: DWARFPosition Globalname Typename
+      fieldPos :: !(DWARFPosition Globalname Typename)
     }
   -- | A form of a variant
   | Form {
@@ -74,28 +73,28 @@ data LValue exp =
       -- | The name of the field being accessed.
       formName :: !Formname,
       -- | The position in source from which this arises.
-      formPos :: DWARFPosition Globalname Typename
+      formPos :: !(DWARFPosition Globalname Typename)
     }
   -- | Dereference a pointer
   | Deref {
       -- | The value being dereferenced.  Must be a pointer type.
       derefVal :: exp,
       -- | The position in source from which this arises.
-      derefPos :: DWARFPosition Globalname Typename
+      derefPos :: !(DWARFPosition Globalname Typename)
     }
   -- | A local value (local variable or argument)
   | Var {
       -- | The name of the local value.
       varName :: !Id,
       -- | The position in source from which this arises.
-      varPos :: DWARFPosition Globalname Typename
+      varPos :: !(DWARFPosition Globalname Typename)
     }
   -- | A global value (global variable or function)
   | Global {
       -- | The name of the global value.
       globalName :: !Globalname,
       -- | The position in source from which this arises.
-      globalPos :: DWARFPosition Globalname Typename
+      globalPos :: !(DWARFPosition Globalname Typename)
     }
 
 instance Eq1 LValue where
@@ -149,22 +148,19 @@ instance Ord1 LValue where
 
 instance Ord elem => Ord (LValue elem) where compare = compare1
 
-instance Hashable1 LValue where
-  hashWithSalt1 s Index { idxVal = val, idxIndex = idx } =
-    s `hashWithSalt` (1 :: Int) `hashWithSalt` val `hashWithSalt` idx
-  hashWithSalt1 s Field { fieldVal = val, fieldName = name } =
-    s `hashWithSalt` (2 :: Int) `hashWithSalt` val `hashWithSalt` name
-  hashWithSalt1 s Form { formVal = val, formName = name } =
-    s `hashWithSalt` (3 :: Int) `hashWithSalt` val `hashWithSalt` name
-  hashWithSalt1 s Deref { derefVal = val } =
-    s `hashWithSalt` (4 :: Int) `hashWithSalt`val
-  hashWithSalt1 s Var { varName = name } =
-    s `hashWithSalt` (5 :: Int) `hashWithSalt` name
-  hashWithSalt1 s Global { globalName = name } =
-    s `hashWithSalt` (6 :: Int) `hashWithSalt` name
-
 instance Hashable elem => Hashable (LValue elem) where
-  hashWithSalt = hashWithSalt1
+  hashWithSalt s Index { idxVal = val, idxIndex = idx } =
+    s `hashWithSalt` (1 :: Int) `hashWithSalt` val `hashWithSalt` idx
+  hashWithSalt s Field { fieldVal = val, fieldName = name } =
+    s `hashWithSalt` (2 :: Int) `hashWithSalt` val `hashWithSalt` name
+  hashWithSalt s Form { formVal = val, formName = name } =
+    s `hashWithSalt` (3 :: Int) `hashWithSalt` val `hashWithSalt` name
+  hashWithSalt s Deref { derefVal = val } =
+    s `hashWithSalt` (4 :: Int) `hashWithSalt`val
+  hashWithSalt s Var { varName = name } =
+    s `hashWithSalt` (5 :: Int) `hashWithSalt` name
+  hashWithSalt s Global { globalName = name } =
+    s `hashWithSalt` (6 :: Int) `hashWithSalt` name
 
 instance RenameType Typename exp => RenameType Typename (LValue exp) where
   renameType f lval @ Index { idxVal = inner } =
