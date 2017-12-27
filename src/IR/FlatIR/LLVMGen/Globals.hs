@@ -37,6 +37,7 @@ module IR.FlatIR.LLVMGen.Globals(
        genDefs
        ) where
 
+import Control.Monad.LLVMGen.Globals.Class
 import Data.Array.IArray
 import Data.Array.Unboxed(UArray)
 import Data.BitArray.IO
@@ -55,93 +56,34 @@ import qualified Data.Map as Map
 import qualified IR.FlatIR.LLVMGen.ConstValue as ConstValue
 import qualified IR.FlatIR.LLVMGen.CodeGen as CodeGen
 import qualified IR.FlatIR.LLVMGen.Types as Types
-import qualified LLVM.Core as LLVM
+import qualified LLVM.AST as LLVM
+import qualified LLVM.AST.Name as LLVM
 
 -- | Run over all the global values, and generate declarations for
 -- them all, but do not define them.  This is necessary, because of
 -- cross-referencing between globals.
-genDecls :: Graph gr =>
+genDecls :: (MonadGlobals m, Graph gr) =>
             Module gr
          -- ^ The FlatIR module being translated
-         -> LLVM.ModuleRef
-         -- ^ The LLVM Module being created
-         -> LLVM.ContextRef
-         -- ^ The LLVM Context handle
-         -> UArray Typename LLVM.TypeRef
-         -- ^ An array mapping Typenames to LLVM Type handles
-         -> LLVMGen (Array Globalname LLVM.ValueRef)
+         -> m (Array Globalname LLVM.Name)
          -- ^ An array mapping Globalnames to LLVM global variable handles
-genDecls m @ (Module { modGlobals = globals }) llvmmod ctx typedefs =
+genDecls m @ Module { modGlobals = globals } =
   let
-    toLLVMType = Types.toLLVMType m ctx typedefs
-
-    genDecl :: Graph gr => Global gr -> IO LLVM.ValueRef
-    genDecl Function { funcName = DeclNames { basicName = basename,
-                                              linkageName = linkname,
-                                              displayName = dispname },
-                       funcRetTy = resty, funcParams = args,
-                       funcValTys = scope } =
-      let
-        mdcontent ref tydesc =
-          [Just $! Int { integerBits = 32,
-                         integerValue = 0xc002e }, -- DW_TAG_subprogram
-           Just $! Int { integerBits = 32,
-                         integerValue = 0 },
-           -- XXX Context descriptor
-           Just $! MetadataStringOperand $! Strict.toString basename,
-           Just $! MetadataStringOperand $! Strict.toString dispname,
-           Just $! MetadataStringOperand $! Strict.toString linkname,
-           -- XXX Line number
-           tydesc,
-           -- XXX Static
-           defined
-           -- XXX Virtuality
-           -- XXX vtable index
-           -- XXX type descriptor for vtable
-           -- XXX flags?
-           Just $! Int { integerBits = 32,
-                         integerValue = 1 },
-           ref,
-           -- XXX template parameters
-           -- XXX function declaration descriptor?
-           -- XXX variables
-           -- XXX line number of body definition
-          ]
-      in do
-        argtys' <- mapM (toLLVMType . (!) scope) args
-        resty' <- toLLVMType resty
-        LLVM.addFunction llvmmod name (LLVM.functionType resty' argtys' False)
-    genDecl GlobalVar { gvarName = DeclNames { basicName = basename,
-                                               linkageName = linkname,
-                                               displayName = dispname },
-                        gvarInit = init, gvarTy = ty } =
-      let
-        defined = case init of
-          Just _ -> Just $! Int { integerBits = 32,
-                                  integerValue = 1 }
-          Nothing -> Just $! Int { integerBits = 32,
-                                   integerValue = 0 },
-
-        mdcontent ref tydesc =
-          [Just $! Int { integerBits = 32,
-                         integerValue = 0xc0034 }, -- DW_TAG_variable
-           Just $! Int { integerBits = 32,
-                         integerValue = 0 },
-           -- XXX Context descriptor
-           Just $! MetadataStringOperand $! Strict.toString basename,
-           Just $! MetadataStringOperand $! Strict.toString dispname,
-           Just $! MetadataStringOperand $! Strict.toString linkname,
-           -- XXX Line number
-           tydesc,
-           -- XXX Static
-           defined
-           ref]
-
-      in do
-        (llvmty, tydebug) <- toLLVMType ty
-        LLVM.addGlobal llvmmod llvmty name
+    getname :: Graph gr => Global gr -> LLVM.Name
+    getname Function { funcName = Just DeclNames { linkageName = linkname } } =
+      return (Name linkname)
+    getname Function { funcName = Nothing } =
+      do
+        name <- createGlobalID
+        return (UnName name)
+    getname GlobalVar { gvarName = Just DeclNames { linkageName = linkname } } =
+      return (Name linkname)
+    getname GlobalVar { gvarName = Nothing } =
+      do
+        name <- createGlobalID
+        return (UnName name)
   in
-    mapM genDecl globals
+    mapM getname globals
 
 -- | Actually generate the definitions for all globals.  This goes
 -- back and fills in all the definitions for the globals.
@@ -155,7 +97,7 @@ genDefs :: Graph gr =>
         -> UArray Typename LLVM.TypeRef
         -- ^ An array mapping Typenames to LLVM Type handles
         -> IO ()
-genDefs irmod @ (Module { modGlobals = globals }) ctx decls typedefs =
+genDefs irmod @ Module { modGlobals = globals } ctx decls typedefs =
   let
     genConst = ConstValue.genConst irmod ctx typedefs decls
     toLLVMType = Types.toLLVMType irmod ctx typedefs
