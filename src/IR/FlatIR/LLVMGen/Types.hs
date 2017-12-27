@@ -36,12 +36,11 @@ module IR.FlatIR.LLVMGen.Types(
        ) where
 
 import Control.Monad.Trans
-import Control.Monad.LLVMGen.Metadata.Debug
+import Control.Monad.LLVMGen.Metadata.Debug.Class
 import Data.Array
 import Data.Graph.Inductive.Graph
 import IR.Common.Ptr
 import IR.FlatIR.Syntax
-import Prelude hiding (mapM_, mapM, foldr, foldl, sequence)
 
 import qualified Data.ByteString.UTF8 as Strict
 import qualified LLVM.AST as LLVM
@@ -63,16 +62,18 @@ toLLVMType m FuncType { funcTyRetTy = retty, funcTyArgTys = argtys } =
   in
    LLVM.FunctionType { LLVM.resultType = retty', LLVM.argumentTypes = argtys',
                        LLVM.isVarArg = False }
+toLLVMType _ VariantType {} = error "Variants aren't supported yet"
 toLLVMType m StructType { structPacked = packed, structFields = fields } =
   let
-    fieldtys = map (\(_, _, ty) -> toLLVMType m ty) (elems fields)
+    fieldtys = map (\FieldDef { fieldDefTy = ty } -> toLLVMType m ty)
+                   (elems fields)
   in
    LLVM.StructureType { LLVM.elementTypes = fieldtys, LLVM.isPacked = packed }
-toLLVMType m ArrayType { arrayLen = Just size, arrayElemTy = inner } =
+toLLVMType m ArrayType { arrayLen = Just arrlen, arrayElemTy = inner } =
   let
     inner' = toLLVMType m inner
   in
-   LLVM.ArrayType { LLVM.nArrayElements = fromIntegral size,
+   LLVM.ArrayType { LLVM.nArrayElements = fromIntegral arrlen,
                     LLVM.elementType = inner' }
 toLLVMType m ArrayType { arrayLen = Nothing, arrayElemTy = inner } =
   let
@@ -112,8 +113,8 @@ toLLVMType _ IntType { intSize = 8 } = LLVM.i8
 toLLVMType _ IntType { intSize = 16 } = LLVM.i16
 toLLVMType _ IntType { intSize = 32 } = LLVM.i32
 toLLVMType _ IntType { intSize = 64 } = LLVM.i64
-toLLVMType _ IntType { intSize = size } =
-  LLVM.IntegerType { LLVM.typeBits = fromIntegral size }
+toLLVMType _ IntType { intSize = intsize } =
+  LLVM.IntegerType { LLVM.typeBits = fromIntegral intsize }
 toLLVMType _ FloatType { floatSize = 16 } = LLVM.half
 toLLVMType _ FloatType { floatSize = 32 } = LLVM.float
 toLLVMType _ FloatType { floatSize = 64 } = LLVM.double
@@ -125,7 +126,7 @@ toLLVMType _ UnitType {} = LLVM.StructureType { LLVM.elementTypes = [],
                                                 LLVM.isPacked = False }
 
 -- | Generate the LLVM type for a given Flat IR type.
-genTypeDefs :: (MonadIO m, MonadDebug m, Graph gr) =>
+genTypeDefs :: (MonadIO m, MonadDebugMetadata m, Graph gr) =>
                Module tagty typedesc gr
             -- ^ The FlatIR module being translated
             -> m [LLVM.Definition]
@@ -133,12 +134,11 @@ genTypeDefs :: (MonadIO m, MonadDebug m, Graph gr) =>
 genTypeDefs m @ Module { modTypes = types } =
   let
     -- Anonymous definitions get a nameless entry
-    mapfun (tyid, tydef @ Anon { anonTy = ty }) =
-      do
-        genTypeDefMD tyid tydef
-        return $! LLVM.TypeDefinition (LLVM.UnName $! fromIntegral $!
-                                       fromEnum tyid)
-                                      (Just $! toLLVMType m ty)
+    mapfun (tyid, Anon { anonTy = ty }) =
+      --genTypeDefMD tyid tydef
+      return $! LLVM.TypeDefinition (LLVM.UnName $! fromIntegral $!
+                                     fromEnum tyid)
+                                    (Just $! toLLVMType m ty)
     -- Name-only definitions get an empty type definition
     mapfun (tyid, tydef @ Name { nameStr = bstr }) =
       do
